@@ -1,0 +1,47 @@
+name: Tag version
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".claude/**"
+      - ".github/**"
+      - ".gitignore"
+      - ".shellcheckrc"
+
+concurrency:
+  group: tag-version
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and push tag
+        run: |
+          set -euo pipefail
+          if git tag --points-at HEAD | grep -q '^v'; then
+            echo "HEAD already tagged"
+            exit 0
+          fi
+          base=$(jq -r .version .claude-plugin/plugin.json)
+          minor=${base%.*}
+          if git rev-parse -q --verify "refs/tags/v$base" >/dev/null; then
+            latest=$(git tag -l "v$minor.*" | sort -V | tail -n1)
+            tag="v$minor.$(( ${latest##*.} + 1 ))"
+          else
+            tag="v$base"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "$tag"
+          git push origin "$tag"
+          echo "Tagged $tag" >> "$GITHUB_STEP_SUMMARY"

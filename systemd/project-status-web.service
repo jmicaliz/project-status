@@ -1,0 +1,11 @@
+[Unit]
+Description=Serve the project-status dashboard
+
+[Service]
+ExecStart=@PYTHON@ @ROOT@/scripts/dashboard-server.py --port @PORT@ --bind @BIND@
+Restart=on-failure
+# claude --bg forks a daemon that hosts every background session and stays in this cgroup.
+KillMode=process
+
+[Install]
+WantedBy=default.target

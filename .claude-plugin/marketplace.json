@@ -1,0 +1,12 @@
+{
+  "name": "project-status",
+  "description": "Local marketplace for the project-status plugin",
+  "owner": { "name": "project-status" },
+  "plugins": [
+    {
+      "name": "project-status",
+      "source": "./",
+      "description": "Keeps a per-repo status file under ~/.project-status"
+    }
+  ]
+}

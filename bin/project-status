@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in
+    /*) self=$target ;;
+    *) self=$(dirname "$self")/$target ;;
+  esac
+done
+ROOT=$(cd "$(dirname "$self")/.." && pwd)
+readonly ROOT
+# shellcheck source=scripts/lib.sh
+. "$ROOT/scripts/lib.sh"
+
+readonly CLAUDE_BIN=${PROJECT_STATUS_CLAUDE:-claude}
+
+usage() {
+  cat <<'EOF'
+Usage: project-status <command> [options]
+
+Commands:
+  ls [--all] [--json]          List repos by what needs you: sessions, stale or blocked status, and Now.
+                               Repos idle for 14 days are hidden unless --all. --json prints the full data.
+  needs [-q] [--json]          List only what is waiting on you: sessions needing input or failed, blockers,
+                               stale status files. Exits 0 if anything needs you, 1 if nothing does.
+  attach [repo] [id]           Jump into a repo: attach to its background session, or start a new one.
+                               With a session id (or prefix), attach to it or resume it if it has ended.
+  start [repo] [prompt]        Start a background session in a fresh worktree, like the dashboard's Start.
+        [--next N] [--attach]  --next N uses item N of the repo's Next list as the prompt.
+  show [repo]                  Print the repo's status file.
+  edit [repo]                  Open the repo's status file in $VISUAL or $EDITOR.
+  rm <id> [-y]                 Remove a background session (asks first unless -y).
+
+The repo defaults to the one you are in; "." also means the current repo.
+EOF
+}
+
+die() {
+  printf 'project-status: %s\n' "$*" >&2
+  exit 1
+}
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/project-status-cli.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+run() {
+  rm -rf "$work"
+  exec "$@"
+}
+
+load() {
+  "$ROOT/scripts/generate-status.sh" "$work/status.json" || die "could not read session state"
+}
+
+resolve_repo() {
+  local name=${1:-.}
+  if [ "$name" = . ]; then
+    name=$(repo_name "$PWD") || die "not in a git repo; name one (see project-status ls)"
+  fi
+  if ! [[ "$name" =~ ^[A-Za-z0-9_.][A-Za-z0-9._-]*$ ]] || [ "$name" = .. ]; then
+    die "invalid repo name: $name"
+  fi
+  printf '%s\n' "$name"
+}
+
+existing_status_file() {
+  local file
+  file=$(status_file "$1")
+  [ -f "$file" ] || die "no status file for $1 yet; start a Claude Code session in it first"
+  printf '%s\n' "$file"
+}
+
+term_width() {
+  local cols
+  cols=$(stty size </dev/tty 2>/dev/null || true)
+  cols=${cols#* }
+  [[ "$cols" =~ ^[1-9][0-9]*$ ]] || cols=${COLUMNS:-0}
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=0
+  echo "$cols"
+}
+
+use_color() {
+  [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && echo true || echo false
+}
+
+expand_home() {
+  case "$1" in
+    "~") printf '%s\n' "$HOME" ;;
+    \~/*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+cmd_ls() {
+  local all=false json=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all | -a) all=true ;;
+      --json) json=true ;;
+      *) die "ls: unknown option $1" ;;
+    esac
+    shift
+  done
+  load
+  if [ "$json" = true ]; then
+    jq . "$work/status.json"
+    return
+  fi
+  local width=0
+  [ ! -t 1 ] || width=$(term_width)
+  jq -r --argjson all "$all" '
+    def ts: if . == null then 0 else (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) end;
+    ["input", "failed", "working", "idle"] as $order
+    | (.generatedAt | ts) as $now
+    | [.projects[]
+        | [.sessions[] | select(.state as $s | $order | index($s))] as $live
+        | {
+            name,
+            rank: ([$live[].state as $s | $order | index($s)] | min // 9),
+            last: ([(.updatedAt | ts)] + [.sessions[].lastActivityAt | ts] | max),
+            counts: ([$order[] as $s | ($live | map(select(.state == $s)) | length) as $n
+                      | select($n > 0) | "\($n) \($s)"] | join(", ")),
+            flags: ([if .stale then "stale" else empty end,
+                     if (.blocked | length) > 0 then "blocked" else empty end,
+                     if .hasStatus | not then "no status" else empty end] | join(", ")),
+            now
+          }
+        | .dormant = (.rank == 9 and ($now - .last) > 14 * 86400)]
+    | sort_by(.rank, -.last)
+    | (map(select($all or (.dormant | not)))[] | [.name, .rank, .counts, .flags, .now] | @tsv),
+      ("#dormant\t" + (map(select(.dormant)) | length | tostring) | select($all | not))
+  ' "$work/status.json" | awk -F '\t' -v width="$width" -v color="$(use_color)" '
+    BEGIN { split("33 31 32 0", tint, " "); wn = 4; ws = 8; wf = 5 }
+    /^#dormant\t/ { dormant = $2; next }
+    {
+      n++; name[n] = $1; rank[n] = $2; counts[n] = $3; flags[n] = $4; now[n] = $5
+      if (length($1) > wn) wn = length($1)
+      if (length($3) > ws) ws = length($3)
+      if (length($4) > wf) wf = length($4)
+    }
+    function paint(text, code) { return (color == "true" && code > 0) ? "\033[" code "m" text "\033[0m" : text }
+    function pad(text, w) { return text sprintf("%" (w - length(text) + 2) "s", "") }
+    END {
+      if (!n) { print "No repos yet. Start a Claude Code session in a git repo."; exit }
+      printf "%s%s%s%s\n", pad("REPO", wn), pad("SESSIONS", ws), pad("FLAGS", wf), "NOW"
+      room = width - wn - ws - wf - 6
+      for (i = 1; i <= n; i++) {
+        text = now[i]
+        if (width > 0 && room > 3 && length(text) > room) text = substr(text, 1, room - 3) "..."
+        code = (rank[i] < 4) ? tint[rank[i] + 1] : 0
+        printf "%s%s%s%s\n", pad(name[i], wn), paint(pad(counts[i], ws), code), paint(pad(flags[i], wf), flags[i] == "" ? 0 : 33), text
+      }
+      if (dormant > 0) printf "\n%d dormant repo%s hidden; use --all to show.\n", dormant, dormant == 1 ? "" : "s"
+    }'
+}
+
+cmd_needs() {
+  local quiet=false json=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -q | --quiet) quiet=true ;;
+      --json) json=true ;;
+      *) die "needs: unknown option $1" ;;
+    esac
+    shift
+  done
+  load
+  jq '
+    [.projects[] | . as $p
+      | (.sessions[] | select(.state == "input" or .state == "failed")
+          | {rank: (if .state == "input" then 0 else 1 end), kind: .state, repo: $p.name, id,
+             text: (if (.title // "") == "" then .id else .title end),
+             detail: ([.id[:8], (if .state == "input" and .waitingFor then "waiting for \(.waitingFor)" else empty end)] | join(", "))}),
+        (.blocked[] | {rank: 2, kind: "blocked", repo: $p.name, text, detail: (if .since then "since \(.since)" else "" end)}),
+        (select(.stale) | {rank: 3, kind: "stale", repo: $p.name, text: "status file is older than the code", detail: ""})]
+    | sort_by(.rank) | map(del(.rank))
+  ' "$work/status.json" >"$work/needs.json"
+  local count
+  count=$(jq length "$work/needs.json")
+  if [ "$json" = true ]; then
+    cat "$work/needs.json"
+  elif [ "$quiet" = false ]; then
+    if [ "$count" -eq 0 ]; then
+      echo "Nothing needs you."
+    else
+      jq -r '.[] | [.kind, .repo, .text, .detail] | @tsv' "$work/needs.json" | awk -F '\t' -v color="$(use_color)" '
+        { n++; kind[n] = $1; repo[n] = $2; text[n] = $3; detail[n] = $4; if (length($1) > wk) wk = length($1); if (length($2) > wr) wr = length($2) }
+        END {
+          split("input failed blocked stale", names, " "); split("33 31 33 33", codes, " ")
+          for (j in names) tint[names[j]] = codes[j]
+          for (i = 1; i <= n; i++) {
+            k = kind[i] sprintf("%" (wk - length(kind[i]) + 2) "s", "")
+            if (color == "true") k = "\033[" tint[kind[i]] "m" k "\033[0m"
+            printf "%s%s%s%s\n", k, repo[i] sprintf("%" (wr - length(repo[i]) + 2) "s", ""), text[i], detail[i] == "" ? "" : " (" detail[i] ")"
+          }
+        }'
+    fi
+  fi
+  [ "$count" -gt 0 ]
+}
+
+cmd_attach() {
+  [ $# -le 2 ] || die "attach: too many arguments"
+  local repo id=${2:-}
+  repo=$(resolve_repo "${1:-}")
+  load
+  jq -e --arg r "$repo" '.projects | any(.name == $r)' "$work/status.json" >/dev/null ||
+    die "attach: unknown repo $repo (see project-status ls)"
+  local plan
+  plan=$(jq -r --arg r "$repo" --arg id "$id" '
+    ["input", "failed", "working", "idle"] as $order
+    | ["working", "input", "idle"] as $open
+    | (.projects[] | select(.name == $r)) as $p
+    | [$p.sessions[] | select(.kind != "remote-control")] as $all
+    | if $id != "" then
+        [$all[] | select(.id | startswith($id))] as $m
+        | if ($m | length) == 0 then ["error", "no session \($id) in \($r)"]
+          elif ($m | length) > 1 then ["error", "session id \($id) is ambiguous in \($r)"]
+          else $m[0] as $s
+            | if ($open | index($s.state)) | not then ["resume", $s.id, ($s.cwd // "-")]
+              elif $s.kind == "background" then ["attach", $s.id, "-"]
+              else ["error", "session \($s.id) is running in a terminal and cannot be attached" + (if $s.url then "; open \($s.url)" else "" end)]
+              end
+          end
+      else
+        ([$all[] | .state as $s | select(.kind == "background" and ($open | index($s)))]
+          | sort_by(.state as $s | $order | index($s)) | first) as $bg
+        | if $bg then ["attach", $bg.id, "-"] else ["new", "-", $p.path] end
+      end
+    | @tsv
+  ' "$work/status.json")
+  local action target dir rc=()
+  IFS=$'\t' read -r action target dir <<<"$plan"
+  [ "$action" != error ] || die "attach: $target"
+  if jq -e '.remoteControl' "$work/status.json" >/dev/null; then rc=(--remote-control); fi
+  dir=$(expand_home "$dir")
+  case "$action" in
+    attach) run "$CLAUDE_BIN" attach "$target" ;;
+    resume)
+      [ -d "$dir" ] || dir=$(expand_home "$(jq -r --arg r "$repo" '.projects[] | select(.name == $r) | .path' "$work/status.json")")
+      cd "$dir" 2>/dev/null || die "attach: $dir is gone"
+      run "$CLAUDE_BIN" --resume "$target" ${rc[@]+"${rc[@]}"}
+      ;;
+    new)
+      cd "$dir" 2>/dev/null || die "attach: $dir is gone"
+      run "$CLAUDE_BIN" ${rc[@]+"${rc[@]}"}
+      ;;
+  esac
+}
+
+cmd_start() {
+  local repo="" prompt="" next="" attach=false positional=0 literal=false
+  while [ $# -gt 0 ]; do
+    if [ "$literal" = false ]; then
+      case "$1" in
+        --next)
+          [ $# -ge 2 ] || die "start: --next needs a number"
+          next=$2
+          shift 2
+          continue
+          ;;
+        --next=*) next=${1#--next=}; shift; continue ;;
+        --attach) attach=true; shift; continue ;;
+        --) literal=true; shift; continue ;;
+        -*) die "start: unknown option $1 (put -- before a prompt that starts with -)" ;;
+      esac
+    fi
+    positional=$((positional + 1))
+    case "$positional" in
+      1) repo=$1 ;;
+      2) prompt=$1 ;;
+      *) die "start: too many arguments; quote the prompt" ;;
+    esac
+    shift
+  done
+  repo=$(resolve_repo "$repo")
+  if [ -n "$next" ]; then
+    [ -z "$prompt" ] || die "start: pass a prompt or --next, not both"
+    [[ "$next" =~ ^[1-9][0-9]*$ ]] || die "start: --next needs a number"
+    load
+    prompt=$(jq -r --arg r "$repo" --argjson n "$next" '.projects[] | select(.name == $r) | .next[$n - 1] // empty' "$work/status.json")
+    [ -n "$prompt" ] || die "start: $repo has no Next item $next"
+  fi
+  local out id worktree
+  if ! out=$("$ROOT/scripts/start-session.sh" "$repo" ${prompt:+"$prompt"} 2>"$work/err"); then
+    die "start: $(sed 's/^start-session.sh: //' "$work/err")"
+  fi
+  id=$(jq -r .id <<<"$out")
+  worktree=$(jq -r '.worktree // empty' <<<"$out")
+  printf 'Started %s in %s%s.\n' "$id" "$repo" "${worktree:+ (worktree $worktree)}"
+  if [ "$attach" = true ]; then
+    run "$CLAUDE_BIN" attach "$id"
+  fi
+  printf 'Attach with: project-status attach %s %s\n' "$repo" "$id"
+}
+
+cmd_show() {
+  [ $# -le 1 ] || die "show: too many arguments"
+  local repo file
+  repo=$(resolve_repo "${1:-}")
+  file=$(existing_status_file "$repo")
+  cat "$file"
+}
+
+cmd_edit() {
+  [ $# -le 1 ] || die "edit: too many arguments"
+  local repo file
+  repo=$(resolve_repo "${1:-}")
+  file=$(existing_status_file "$repo")
+  run sh -c "${VISUAL:-${EDITOR:-vi}} \"\$1\"" project-status "$file"
+}
+
+cmd_rm() {
+  local id="" yes=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -y | --yes) yes=true ;;
+      -*) die "rm: unknown option $1" ;;
+      *) [ -z "$id" ] || die "rm: one session at a time"; id=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$id" ] || die "rm: name a session id (see project-status ls --json)"
+  [[ "$id" =~ ^[0-9a-f-]+$ ]] || die "rm: invalid session id: $id"
+  load
+  local match repo sid title
+  match=$(jq -r --arg id "$id" '
+    [.projects[] | .name as $r | .sessions[] | select(.kind == "background" and (.id | startswith($id))) | [$r, .id, .title]]
+    | if length == 1 then .[0] | @tsv elif length == 0 then "none" else "many" end' "$work/status.json")
+  case "$match" in
+    none) die "rm: no background session $id" ;;
+    many) die "rm: session id $id is ambiguous" ;;
+  esac
+  IFS=$'\t' read -r repo sid title <<<"$match"
+  if [ "$yes" = false ]; then
+    [ -t 0 ] || die "rm: pass -y to remove without a prompt"
+    printf 'Remove background session %s%s in %s? [y/N] ' "${sid:0:8}" "${title:+ ($title)}" "$repo" >&2
+    local answer
+    read -r answer || true
+    case "$answer" in
+      y | Y | yes) ;;
+      *) echo "Kept it." >&2; exit 1 ;;
+    esac
+  fi
+  "$ROOT/scripts/remove-session.sh" "$sid" >/dev/null 2>"$work/err" || die "rm: $(sed 's/^remove-session.sh: //' "$work/err")"
+  printf 'Removed %s.\n' "${sid:0:8}"
+}
+
+case "${1:-}" in
+  ls | needs | attach | start | show | edit | rm)
+    command=$1
+    shift
+    "cmd_$command" "$@"
+    ;;
+  -h | --help | help | "") usage ;;
+  *) usage >&2; exit 2 ;;
+esac

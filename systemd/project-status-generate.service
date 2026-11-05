@@ -1,0 +1,7 @@
+[Unit]
+Description=Regenerate the project-status dashboard data
+
+[Service]
+Type=oneshot
+Environment=PATH=@PATH@
+ExecStart=@ROOT@/scripts/generate-status.sh
