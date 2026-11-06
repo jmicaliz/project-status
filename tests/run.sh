@@ -298,7 +298,7 @@ cli() {
 log_args() { sed 1d "$FAKE_CLAUDE_LOG" | tr "\n" " "; }
 check "cli: ls --json prints the generated payload" 'cli ls --json | jq -e ".projects | any(.name == \"demo\")" >/dev/null'
 check "cli: ls counts live sessions by state, most urgent first" 'cli ls | grep -E "^demo +1 input, 2 working " >/dev/null'
-check "cli: ls prints a header and plain text when piped" 'cli ls | head -n 1 | grep -q "^REPO " && ! cli ls | grep -q "$(printf "\033")"'
+check "cli: ls prints a header and plain text when piped" 'cli ls >"$WORK/ls-piped" && head -n 1 "$WORK/ls-piped" | grep -q "^REPO " && ! grep -q "$(printf "\033")" "$WORK/ls-piped"'
 check "cli: attach picks the most urgent background session" 'cli attach demo && [ "$(log_args)" = "attach s-wt " ]'
 check "cli: attach by id prefix resumes an ended session in its directory" 'cli attach demo s-ol && [ "$(sed -n 1p "$FAKE_CLAUDE_LOG")" = "$(cd "$repo" && pwd -P)" ] && [ "$(log_args)" = "--resume s-old " ]'
 check "cli: attach refuses a session running in a terminal" '! cli attach demo s-main 2>"$WORK/cli-err" && grep -q "running in a terminal" "$WORK/cli-err"'
@@ -311,15 +311,15 @@ check "cli: needs --json and -q" 'cli needs --json | jq -e "map(.kind) | index(\
 mkdir -p "$WORK/empty-status"
 check "cli: needs exits 1 when nothing needs you" 'out=$(PROJECT_STATUS_DIR="$WORK/empty-status" SESSIONS="$WORK/no-sessions.json" cli needs; echo "rc=$?") && [ "$out" = "Nothing needs you.
 rc=1" ]'
-check "cli: start runs start-session and reports the id" 'cli start demo "do the thing" | grep -q "^Started abcd1234 in demo (worktree ps-" && [ "$(tail -n 1 "$FAKE_CLAUDE_LOG")" = "do the thing" ]'
+check "cli: start runs start-session and reports the id" 'cli start demo "do the thing" | grep "^Started abcd1234 in demo (worktree ps-" >/dev/null && [ "$(tail -n 1 "$FAKE_CLAUDE_LOG")" = "do the thing" ]'
 check "cli: start --next uses that Next item as the prompt" 'cli start --next 2 demo >/dev/null && [ "$(tail -n 1 "$FAKE_CLAUDE_LOG")" = "Second thing" ]'
 check "cli: start --attach attaches to the new session" 'cli start demo --attach >/dev/null && [ "$(log_args)" = "attach abcd1234 " ]'
 check "cli: start refuses a missing Next item and a prompt with --next" '! cli start demo --next 9 2>/dev/null && ! cli start demo hi --next 1 2>/dev/null'
-check "cli: show prints the status file" 'cli show demo | grep -q "^Demo project for tests"'
+check "cli: show prints the status file" 'cli show demo | grep "^Demo project for tests" >/dev/null'
 check "cli: edit opens the status file in EDITOR" '[ "$(EDITOR=echo cli edit demo)" = "$status" ]'
 check "cli: show and edit refuse a repo with no status file" '! cli show nope 2>/dev/null && ! EDITOR=echo cli edit nope 2>/dev/null'
 jq --arg repo "$repo" '[{cwd: $repo, kind: "background", sessionId: "abcd1234-0000-4000-8000-000000000000", status: "idle"}, {cwd: $repo, kind: "interactive", sessionId: "eeee5555-0000-4000-8000-000000000000", status: "idle"}]' >"$WORK/cli-rm.json" <<<'null'
-check "cli: rm -y removes a background session by id prefix" 'SESSIONS="$WORK/cli-rm.json" cli rm -y abcd | grep -q "^Removed abcd1234" && [ "$(log_args)" = "abcd1234 " ]'
+check "cli: rm -y removes a background session by id prefix" 'SESSIONS="$WORK/cli-rm.json" cli rm -y abcd | grep "^Removed abcd1234" >/dev/null && [ "$(log_args)" = "abcd1234 " ]'
 check "cli: rm without -y off a terminal is refused" '! SESSIONS="$WORK/cli-rm.json" cli rm abcd </dev/null 2>"$WORK/cli-err" && grep -q "pass -y" "$WORK/cli-err"'
 check "cli: rm refuses an interactive session" '! SESSIONS="$WORK/cli-rm.json" cli rm -y eeee 2>/dev/null'
 

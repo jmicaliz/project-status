@@ -73,51 +73,86 @@ remote_control_sessions() {
   done
 }
 
-bridge_sessions() {
-  local f
-  for f in "$CLAUDE_DIR"/sessions/*.json; do
-    [ -f "$f" ] || continue
-    jq -c 'select(.pid and .sessionId and (.bridgeSessionId // "" | test("^session_[A-Za-z0-9]+$")))
-      | {key: "\(.pid):\(.sessionId)", value: .bridgeSessionId}' "$f" 2>/dev/null || true
-  done | jq -s 'from_entries'
-}
-
-transcript_title() {
-  local file=$1 title
-  [ -f "$file" ] || return 0
-  title=$(grep -h '"type":"custom-title"' "$file" | tail -n 1 | jq -r '.customTitle // empty' 2>/dev/null)
-  [ -n "$title" ] || title=$(grep -h '"type":"ai-title"' "$file" | tail -n 1 | jq -r '.aiTitle // empty' 2>/dev/null)
-  [ -n "$title" ] || title=$(head -n 400 "$file" | jq -r '
-    select(.type == "user" and (.message.content | type) == "string" and (.message.content | startswith("<") | not))
-    | .message.content' 2>/dev/null | head -n 1 | cut -c1-80)
-  printf '%s' "$title" | tr '\t\n' '  '
-}
-
-transcript_tokens() {
-  local id=$1 file=$2 cache="$USAGE_DIR/tokens/$1.json" key
-  [ -f "$file" ] || return 0
-  key="$(wc -c <"$file" | tr -d ' '):$(mtime "$file")"
-  if [ -f "$cache" ] && jq -e --arg k "$key" '.key == $k' "$cache" >/dev/null 2>&1; then
-    jq -c '.tokens' "$cache"
-    return
+jq_files() {
+  local filter=$1 out f
+  shift
+  [ $# -gt 0 ] || return 0
+  if out=$(jq -c "$filter" "$@" 2>/dev/null); then
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return 0
   fi
-  grep -F '"usage"' "$file" | jq -R -n -c '
+  for f in "$@"; do jq -c "$filter" "$f" 2>/dev/null || true; done
+}
+
+readonly FILE_ID='input_filename | split("/") | last | sub("\\.[a-z]+$"; "")'
+
+bridge_sessions() {
+  local f files=()
+  for f in "$CLAUDE_DIR"/sessions/*.json; do
+    [ -f "$f" ] && files+=("$f")
+  done
+  jq_files 'select(.pid and .sessionId and (.bridgeSessionId // "" | test("^session_[A-Za-z0-9]+$")))
+    | {key: "\(.pid):\(.sessionId)", value: .bridgeSessionId}' ${files[@]+"${files[@]}"} | jq -s 'from_entries'
+}
+
+transcript_titles() {
+  [ $# -gt 0 ] || return 0
+  grep -H --null -E '"type":"(custom|ai)-title"' "$@" 2>/dev/null | jq -R -n -r '
+    reduce (inputs | index("\u0000") as $i | {f: .[:$i], l: (.[$i + 1:] | fromjson? // empty)}) as $r ({};
+      if $r.l.type == "custom-title" then .[$r.f].custom = ($r.l.customTitle // "")
+      elif $r.l.type == "ai-title" then .[$r.f].ai = ($r.l.aiTitle // "")
+      else . end)
+    | to_entries[]
+    | ((.value.custom // "") | if . == "" then null else . end) // ((.value.ai // "") | if . == "" then null else . end) // empty
+      as $title
+    | (.key | split("/") | last | rtrimstr(".jsonl")) + "\t" + ($title | gsub("[\t\n]"; " "))' || true
+}
+
+first_prompts() {
+  [ $# -gt 0 ] || return 0
+  awk 'FNR > 400 { nextfile } { print FILENAME "\t" $0 }' "$@" 2>/dev/null | jq -R -n -r '
+    reduce (inputs | index("\t") as $i | {f: .[:$i], l: (.[$i + 1:] | fromjson? // empty)}
+      | select(.l.type == "user" and (.l.message.content | type) == "string" and (.l.message.content | startswith("<") | not))) as $r
+      ({}; .[$r.f] //= ($r.l.message.content | split("\n")[0] | .[:80]))
+    | to_entries[] | select(.value != "")
+    | (.key | split("/") | last | rtrimstr(".jsonl")) + "\t" + (.value | gsub("\t"; " "))' || true
+}
+
+refresh_tokens() {
+  local id=$1 key=$2 file=$3 cache="$USAGE_DIR/tokens/$1.json"
+  grep -F '"usage"' "$file" | jq -R -n -c --arg k "$key" '
     reduce (inputs | fromjson? | select(.type == "assistant" and .message.id and .message.usage)) as $l
       ({}; .[$l.message.id] = $l.message.usage)
     | [.[]] | def total(f): map(f // 0) | add // 0;
-    {messages: length, input: total(.input_tokens), cacheWrite: total(.cache_creation_input_tokens),
-     cacheRead: total(.cache_read_input_tokens), output: total(.output_tokens)}' >"$work/tokens" 2>/dev/null || return 0
-  mkdir -p "$USAGE_DIR/tokens"
-  jq -c --arg k "$key" '{key: $k, tokens: .}' "$work/tokens" >"$cache.$$" && mv "$cache.$$" "$cache"
-  cat "$work/tokens"
+    {key: $k, tokens: {messages: length, input: total(.input_tokens), cacheWrite: total(.cache_creation_input_tokens),
+     cacheRead: total(.cache_read_input_tokens), output: total(.output_tokens)}}' >"$cache.$$" 2>/dev/null &&
+    mv "$cache.$$" "$cache" || rm -f "$cache.$$"
+}
+
+session_repo() {
+  local cwd=$1 out common="" gitdir="" top="" head="" branch="" main
+  out=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir --git-dir --show-toplevel 2>/dev/null || true)
+  { IFS= read -r common; IFS= read -r gitdir; IFS= read -r top; } <<<"$out" || true
+  [ -n "$common" ] || return 0
+  [ -n "$top" ] || top=$cwd
+  { IFS= read -r head || true; } <"$gitdir/HEAD" 2>/dev/null || true
+  case "$head" in "ref: refs/heads/"*) branch=${head#ref: refs/heads/} ;; esac
+  if [ "$branch" = .invalid ]; then
+    branch=$(git -C "$cwd" branch --show-current 2>/dev/null || true)
+  fi
+  main=${common%/*}
+  printf '%s\t%s\t%s\t%s\t%s\n' "$cwd" "${main##*/}" "$main" "$top" "$branch"
 }
 
 resolve_path() {
-  local name=$1 recorded root
+  local name=$1 recorded root path="" cwd repo main rest
   recorded=$(repo_path_file "$name")
-  if [ -f "$recorded" ] && [ -d "$(cat "$recorded")" ]; then
-    cat "$recorded"
-    return
+  if [ -f "$recorded" ]; then
+    { IFS= read -r path || true; } <"$recorded"
+    if [ -n "$path" ] && [ -d "$path" ]; then
+      printf '%s\n' "$path"
+      return
+    fi
   fi
   for root in $ROOTS; do
     if [ -d "$root/$name/.git" ]; then
@@ -125,27 +160,35 @@ resolve_path() {
       return
     fi
   done
+  while IFS=$'\t' read -r cwd repo main rest; do
+    if [ "$repo" = "$name" ]; then
+      printf '%s\n' "$main"
+      return
+    fi
+  done <"$work/session-repos.tsv"
+  printf '%s\n' "${ROOTS%% *}/$name"
 }
 
 parse_status() {
   awk '
+    FNR == 1 { titled = 0; described = 0; sec = ""; name = FILENAME; sub(/^.*\//, "", name); sub(/\.md$/, "", name) }
     /^# / && !titled { titled = 1; next }
     /^## / { sec = tolower(substr($0, 4)); sub(/[[:space:]]+$/, "", sec); next }
     /^[[:space:]]*$/ { next }
     {
       line = $0
       if (sec == "") {
-        if (!described) { sub(/^> ?/, "", line); print "desc\t" line; described = 1 }
+        if (!described) { sub(/^> ?/, "", line); print name "\tdesc\t" line; described = 1 }
         next
       }
       if (match(line, /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+/)) {
-        print sec "\t" substr(line, RLENGTH + 1)
+        print name "\t" sec "\t" substr(line, RLENGTH + 1)
       } else {
         sub(/^[[:space:]]+/, "", line)
-        print sec "+\t" line
+        print name "\t" sec "+\t" line
       }
     }
-  ' "$1"
+  ' "$@"
 }
 
 now=$(date +%s)
@@ -155,95 +198,133 @@ remote_control_sessions >"$work/remote-control.jsonl"
 jq -s '.[0] + .[1:]' "$work/agents.json" "$work/remote-control.jsonl" >"$work/sessions.json"
 bridge_sessions >"$work/bridges.json"
 
-: >"$work/titles.tsv"
-: >"$work/usage.jsonl"
-jq -r '.[] | select(.kind != "remote-control" and .sessionId and .cwd) | [.sessionId, .cwd] | @tsv' "$work/sessions.json" |
-  while IFS=$'\t' read -r id cwd; do
-    transcript="$CLAUDE_DIR/projects/$(printf '%s' "$cwd" | sed 's/[^A-Za-z0-9]/-/g')/$id.jsonl"
-    title=$(transcript_title "$transcript")
-    if [ -n "$title" ]; then
-      printf '%s\t%s\n' "$id" "$title" >>"$work/titles.tsv"
-    fi
-    [[ "$id" =~ ^[A-Za-z0-9-]+$ ]] || continue
-    tokens=$(transcript_tokens "$id" "$transcript")
-    cost="$USAGE_DIR/sessions/$id.json"
-    [ -f "$cost" ] || cost=/dev/null
-    jq -c -n --arg id "$id" --argjson tokens "${tokens:-null}" --slurpfile cost "$cost" \
-      '{id: $id, tokens: $tokens, costUsd: ($cost[0].costUsd // null)} | select(.tokens != null or .costUsd != null)' >>"$work/usage.jsonl" 2>/dev/null || true
+transcripts=()
+while IFS=$'\t' read -r id cwd; do
+  transcript="$CLAUDE_DIR/projects/${cwd//[^A-Za-z0-9]/-}/$id.jsonl"
+  [ -f "$transcript" ] && transcripts+=("$transcript")
+done < <(jq -r '.[] | select(.kind != "remote-control" and .sessionId and .cwd and (.sessionId | test("^[A-Za-z0-9-]+$"))) | [.sessionId, .cwd] | @tsv' "$work/sessions.json")
+
+transcript_titles ${transcripts[@]+"${transcripts[@]}"} >"$work/titles.tsv"
+untitled=()
+for transcript in ${transcripts[@]+"${transcripts[@]}"}; do
+  id=${transcript##*/}
+  id=${id%.jsonl}
+  grep -q "^$id"$'\t' "$work/titles.tsv" || untitled+=("$transcript")
+done
+first_prompts ${untitled[@]+"${untitled[@]}"} >>"$work/titles.tsv"
+
+mkdir -p "$USAGE_DIR/tokens" "$USAGE_DIR/sessions" 2>/dev/null || true
+if [ ${#transcripts[@]} -gt 0 ]; then
+  stat "${SIZE_MTIME_PATH_FLAGS[@]}" "${transcripts[@]}" 2>/dev/null >"$work/transcript-keys" || true
+  cached=()
+  for transcript in "${transcripts[@]}"; do
+    id=${transcript##*/}
+    id=${id%.jsonl}
+    [ -f "$USAGE_DIR/tokens/$id.json" ] && cached+=("$USAGE_DIR/tokens/$id.json")
   done
+  jq_files "{id: ($FILE_ID), key}" ${cached[@]+"${cached[@]}"} | jq -r '[.id, .key] | @tsv' >"$work/cached-keys"
+  while IFS=' ' read -r key transcript; do
+    id=${transcript##*/}
+    id=${id%.jsonl}
+    grep -qxF "$id"$'\t'"$key" "$work/cached-keys" || refresh_tokens "$id" "$key" "$transcript" &
+  done <"$work/transcript-keys"
+  wait
+fi
+usage_files=()
+for f in "$USAGE_DIR"/tokens/*.json "$USAGE_DIR"/sessions/*.json; do
+  [ -f "$f" ] && usage_files+=("$f")
+done
+jq_files "{id: ($FILE_ID), kind: (input_filename | split(\"/\")[-2]), tokens, costUsd}" ${usage_files[@]+"${usage_files[@]}"} |
+  jq -s -c 'reduce .[] as $u ({}; if $u.kind == "tokens" then .[$u.id].tokens = $u.tokens else .[$u.id].costUsd = $u.costUsd end)
+    | to_entries[] | {id: .key, tokens: (.value.tokens // null), costUsd: (.value.costUsd // null)}
+    | select(.tokens != null or .costUsd != null)' >"$work/usage.jsonl"
 [ ! -d "$USAGE_DIR" ] || find "$USAGE_DIR/sessions" "$USAGE_DIR/tokens" -type f -mtime +30 -exec rm -f {} + 2>/dev/null || true
 remote_control=false
 "$PLUGIN_ROOT/scripts/start-session.sh" --probe 2>/dev/null | jq -e '.remoteControl == true' >/dev/null 2>&1 && remote_control=true
 limits="$USAGE_DIR/limits.json"
 jq -e 'type == "object"' "$limits" >/dev/null 2>&1 || limits=/dev/null
 
-: >"$work/session-repos.tsv"
-jq -r '.[].cwd // empty' "$work/sessions.json" | sort -u | while IFS= read -r cwd; do
+i=0
+while IFS= read -r cwd; do
   [ -d "$cwd" ] || continue
-  common=$(repo_common_dir "$cwd") || continue
-  top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$cwd")
-  branch=$(git -C "$cwd" branch --show-current 2>/dev/null || true)
-  printf '%s\t%s\t%s\t%s\t%s\n' "$cwd" "$(basename "$(dirname "$common")")" "$(dirname "$common")" "$top" "$branch" >>"$work/session-repos.tsv"
-done
+  i=$((i + 1))
+  session_repo "$cwd" >"$work/repo.$((100000 + i))" &
+done < <(jq -r '.[].cwd // empty' "$work/sessions.json" | sort -u)
+wait
+cat /dev/null "$work"/repo.* >"$work/session-repos.tsv" 2>/dev/null || : >"$work/session-repos.tsv"
 
 {
   for file in "$STATUS_DIR"/*.md; do
     [ -e "$file" ] || continue
-    name=$(basename "$file" .md)
+    name=${file##*/}
     case "$name" in _*) continue ;; esac
-    printf '%s\n' "$name"
+    printf '%s\n' "${name%.md}"
   done
   cut -f2 "$work/session-repos.tsv"
 } | sort -u >"$work/names"
 
+status_files=()
 while IFS= read -r name; do
   file=$(status_file "$name")
+  [ -f "$file" ] && status_files+=("$file")
+done <"$work/names"
+
+: >"$work/parsed.tsv"
+: >"$work/times"
+if [ ${#status_files[@]} -gt 0 ]; then
+  parse_status "${status_files[@]}" >"$work/parsed.tsv"
+  stat "${TIMES_PATH_FLAGS[@]}" "${status_files[@]}" 2>/dev/null >"$work/times" || true
+fi
+
+: >"$work/paths.tsv"
+while IFS= read -r name; do
   path=$(resolve_path "$name")
-  [ -n "$path" ] || path=$(awk -F '\t' -v n="$name" '$2 == n { print $3; exit }' "$work/session-repos.tsv")
-  [ -n "$path" ] || path="${ROOTS%% *}/$name"
-  if [ -f "$file" ]; then
-    has_status=true
-    mt=$(mtime "$file")
-    bt=$(btime "$file")
-    parsed=$(parse_status "$file")
-  else
-    has_status=false
-    mt=0
-    bt=0
-    parsed=""
+  printf '%s\t%s\n' "$name" "$path" >>"$work/paths.tsv"
+  file=$(status_file "$name")
+  if [ -f "$file" ] && [ -d "$path" ]; then
+    { printf '%s\t%s\n' "$name" "$(newest_change "$path")" >"$work/newest.$name"; } &
   fi
-  stale=false
-  if [ "$has_status" = true ] && [ -n "$path" ] && [ -d "$path" ] && [ "$(newest_change "$path")" -gt "$mt" ]; then
-    stale=true
-  fi
-  jq -n \
-    --arg name "$name" --arg path "$path" --arg home "$HOME" --arg parsed "$parsed" \
-    --argjson hasStatus "$has_status" --argjson mt "$mt" --argjson bt "$bt" \
-    --argjson stale "$stale" --argjson now "$now" '
-    ($parsed | split("\n") | map(select(length > 0) | index("\t") as $i | {k: .[:$i], v: .[$i + 1:]})) as $rows
-    | (reduce $rows[] as $r ({};
-        if ($r.k | endswith("+")) then
-          ($r.k | rtrimstr("+")) as $k
-          | .[$k] |= (if (. // []) | length > 0 then .[:-1] + [.[-1] + " " + $r.v] else [$r.v] end)
-        else .[$r.k] += [$r.v] end)) as $s
-    | {
-        name: $name,
-        path: (if ($path | startswith($home + "/")) then "~" + ($path | ltrimstr($home)) else $path end),
-        hasStatus: $hasStatus,
-        desc: (($s.desc // [""])[0] | if test("^\\(.*description\\)$") then "" else . end),
-        now: (($s.now // []) | join(" ")),
-        next: (($s.next // []) | map(select(test("^\\(none yet\\)$") | not))),
-        blocked: (($s.blocked // [])
-          | map(select(test("^none\\.?$"; "i") | not)
-            | (capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)\\s*$") // {text: ., since: null}))),
-        updatedAt: (if $hasStatus then ($mt | todate) else null end),
-        summary: (($s["last updated"] // [""])[0]
-          | sub("^\\d{4}-\\d{2}-\\d{2}:?\\s*"; "")
-          | if test("^\\(not yet updated\\)$") then "" else . end),
-        stale: $stale,
-        isNew: ($bt > 0 and ($now - $bt) < 86400)
-      }'
-done <"$work/names" >"$work/projects.jsonl"
+done <"$work/names"
+wait
+cat /dev/null "$work"/newest.* >"$work/newest.tsv" 2>/dev/null || : >"$work/newest.tsv"
+
+jq -n -c \
+  --rawfile names "$work/names" --rawfile paths "$work/paths.tsv" --rawfile parsed "$work/parsed.tsv" \
+  --rawfile times "$work/times" --rawfile newest "$work/newest.tsv" \
+  --arg home "$HOME" --arg dir "$STATUS_DIR" --argjson now "$now" '
+  def rows($t): $t | split("\n") | map(select(length > 0) | split("\t"));
+  (rows($paths) | map({key: .[0], value: .[1]}) | from_entries) as $pathOf
+  | (rows($newest) | map({key: .[0], value: (.[1] | tonumber? // 0)}) | from_entries) as $newestOf
+  | ($times | split("\n") | map(select(length > 0) | capture("^(?<m>[0-9]+) (?<b>[^ ]+) (?<f>.*)$")
+      | {key: (.f | split("/") | last | rtrimstr(".md")), value: {mt: (.m | tonumber), bt: (.b | tonumber? // 0 | if . < 0 then 0 else . end)}})
+      | from_entries) as $timesOf
+  | (rows($parsed) | group_by(.[0]) | map({key: .[0][0], value: map({k: .[1], v: (.[2:] | join("\t"))})}) | from_entries) as $rowsOf
+  | rows($names)[] | .[0] as $name
+  | ($timesOf[$name] != null) as $hasStatus
+  | ($timesOf[$name] // {mt: 0, bt: 0}) as $t
+  | ($pathOf[$name] // "") as $path
+  | (reduce ($rowsOf[$name] // [])[] as $r ({};
+      if ($r.k | endswith("+")) then
+        ($r.k | rtrimstr("+")) as $k
+        | .[$k] |= (if (. // []) | length > 0 then .[:-1] + [.[-1] + " " + $r.v] else [$r.v] end)
+      else .[$r.k] += [$r.v] end)) as $s
+  | {
+      name: $name,
+      path: (if ($path | startswith($home + "/")) then "~" + ($path | ltrimstr($home)) else $path end),
+      hasStatus: $hasStatus,
+      desc: (($s.desc // [""])[0] | if test("^\\(.*description\\)$") then "" else . end),
+      now: (($s.now // []) | join(" ")),
+      next: (($s.next // []) | map(select(test("^\\(none yet\\)$") | not))),
+      blocked: (($s.blocked // [])
+        | map(select(test("^none\\.?$"; "i") | not)
+          | (capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)\\s*$") // {text: ., since: null}))),
+      updatedAt: (if $hasStatus then ($t.mt | todate) else null end),
+      summary: (($s["last updated"] // [""])[0]
+        | sub("^\\d{4}-\\d{2}-\\d{2}:?\\s*"; "")
+        | if test("^\\(not yet updated\\)$") then "" else . end),
+      stale: ($hasStatus and ($newestOf[$name] // 0) > $t.mt),
+      isNew: ($t.bt > 0 and ($now - $t.bt) < 86400)
+    }' >"$work/projects.jsonl"
 
 jq -n \
   --slurpfile projects "$work/projects.jsonl" \

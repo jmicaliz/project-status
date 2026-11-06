@@ -27,9 +27,13 @@ repo_path_file() {
 if stat -c %Y / >/dev/null 2>&1; then
   MTIME_FLAGS=(-c %Y)
   BTIME_FLAGS=(-c %W)
+  SIZE_MTIME_PATH_FLAGS=(-c '%s:%Y %n')
+  TIMES_PATH_FLAGS=(-c '%Y %W %n')
 else
   MTIME_FLAGS=(-f %m)
   BTIME_FLAGS=(-f %B)
+  SIZE_MTIME_PATH_FLAGS=(-f '%z:%m %N')
+  TIMES_PATH_FLAGS=(-f '%m %B %N')
 fi
 
 mtime() {
