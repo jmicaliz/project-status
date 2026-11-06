@@ -362,6 +362,7 @@ jq -n \
       | $bridges[0]["\(.pid):\(.sessionId)"] as $bridge | {
       repo: $r.name,
       id: .sessionId,
+      jobId: (.id // null),
       title: ($titleOf[.sessionId] // .title // .name // ""),
       worktree: (if $r.top != $r.main then {name: ($r.top | split("/") | last), branch: (if $r.branch == "" then null else $r.branch end)} else null end),
       dir: ($r.top | tilde),

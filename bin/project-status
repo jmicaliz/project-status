@@ -220,14 +220,14 @@ cmd_attach() {
           elif ($m | length) > 1 then ["error", "session id \($id) is ambiguous in \($r)"]
           else $m[0] as $s
             | if ($open | index($s.state)) | not then ["resume", $s.id, ($s.cwd // "-")]
-              elif $s.kind == "background" then ["attach", $s.id, "-"]
+              elif $s.kind == "background" then ["attach", ($s.jobId // $s.id), "-"]
               else ["error", "session \($s.id) is running in a terminal and cannot be attached" + (if $s.url then "; open \($s.url)" else "" end)]
               end
           end
       else
         ([$all[] | .state as $s | select(.kind == "background" and ($open | index($s)))]
           | sort_by(.state as $s | $order | index($s)) | first) as $bg
-        | if $bg then ["attach", $bg.id, "-"] else ["new", "-", $p.path] end
+        | if $bg then ["attach", ($bg.jobId // $bg.id), "-"] else ["new", "-", $p.path] end
       end
     | @tsv
   ' "$work/status.json")
