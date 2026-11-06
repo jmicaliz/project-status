@@ -147,7 +147,7 @@ MD
 touch "$status"
 cat >"$WORK/sessions.json" <<JSON
 [
-  {"cwd": "$wt", "kind": "background", "sessionId": "s-wt", "name": "worktree job", "status": "waiting", "waitingFor": "permission prompt", "startedAt": 1793555061189},
+  {"cwd": "$wt", "kind": "background", "id": "j-wt", "sessionId": "s-wt", "name": "worktree job", "status": "waiting", "waitingFor": "permission prompt", "startedAt": 1793555061189},
   {"cwd": "$repo", "kind": "interactive", "sessionId": "s-main", "name": "main chat", "status": "busy", "startedAt": 1793555061189},
   {"cwd": "$plain", "kind": "interactive", "sessionId": "s-plain", "name": "not a repo", "status": "idle", "startedAt": 1793555061189},
   {"cwd": "$repo", "kind": "background", "sessionId": "s-new", "name": "just started", "status": null, "state": "working", "startedAt": 1793555061190}
@@ -299,13 +299,13 @@ log_args() { sed 1d "$FAKE_CLAUDE_LOG" | tr "\n" " "; }
 check "cli: ls --json prints the generated payload" 'cli ls --json | jq -e ".projects | any(.name == \"demo\")" >/dev/null'
 check "cli: ls counts live sessions by state, most urgent first" 'cli ls | grep -E "^demo +1 input, 2 working " >/dev/null'
 check "cli: ls prints a header and plain text when piped" 'cli ls >"$WORK/ls-piped" && head -n 1 "$WORK/ls-piped" | grep -q "^REPO " && ! grep -q "$(printf "\033")" "$WORK/ls-piped"'
-check "cli: attach picks the most urgent background session" 'cli attach demo && [ "$(log_args)" = "attach s-wt " ]'
+check "cli: attach picks the most urgent background session" 'cli attach demo && [ "$(log_args)" = "attach j-wt " ]'
 check "cli: attach by id prefix resumes an ended session in its directory" 'cli attach demo s-ol && [ "$(sed -n 1p "$FAKE_CLAUDE_LOG")" = "$(cd "$repo" && pwd -P)" ] && [ "$(log_args)" = "--resume s-old " ]'
 check "cli: attach refuses a session running in a terminal" '! cli attach demo s-main 2>"$WORK/cli-err" && grep -q "running in a terminal" "$WORK/cli-err"'
 check "cli: attach starts a new session when none can be attached" 'SESSIONS="$WORK/cli-term.json" RC=on cli attach demo && [ "$(sed -n 1p "$FAKE_CLAUDE_LOG")" = "$(cd "$repo" && pwd -P)" ] && [ "$(log_args)" = "--remote-control " ]'
-check "cli: attach defaults to the repo you are in" '(cd "$repo" && cli attach) && [ "$(log_args)" = "attach s-wt " ]'
+check "cli: attach defaults to the repo you are in" '(cd "$repo" && cli attach) && [ "$(log_args)" = "attach j-wt " ]'
 check "cli: attach refuses an unknown repo" '! cli attach nope 2>/dev/null'
-check "cli: works when run through a symlink" 'CLI="$WORK/bin/ps-link" cli attach demo && [ "$(log_args)" = "attach s-wt " ]'
+check "cli: works when run through a symlink" 'CLI="$WORK/bin/ps-link" cli attach demo && [ "$(log_args)" = "attach j-wt " ]'
 check "cli: needs lists input sessions first, then blockers" 'cli needs >"$WORK/needs" && head -n 1 "$WORK/needs" | grep -Eq "^input +demo +worktree job \(s-wt, waiting for permission prompt\)$" && grep -Eq "^blocked +demo +Waiting on review \(since 2026-10-29\)$" "$WORK/needs"'
 check "cli: needs --json and -q" 'cli needs --json | jq -e "map(.kind) | index(\"input\") == 0 and index(\"blocked\") != null" >/dev/null && [ -z "$(cli needs -q)" ]'
 mkdir -p "$WORK/empty-status"

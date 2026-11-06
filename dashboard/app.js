@@ -129,7 +129,7 @@
   const local = () => !location.hostname || /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(location.hostname);
   const onHost = cmd => (local() ? cmd : `ssh ${host()} -t '${sq(cmd)}'`);
   const rc = () => (state.data?.remoteControl === false ? '' : ' --remote-control');
-  const cAttach = id => onHost(`${claude()} attach ${id}`);
+  const cAttach = s => onHost(`${claude()} attach ${s.jobId || s.id}`);
   const cNew = p => onHost(`cd ${shellPath(p.path)} && ${claude()}${rc()}`);
   const cResume = (p, s) => onHost(`cd ${shellPath(s.dir || p.path)} && ${claude()} --resume ${s.id}${rc()}`);
   const sshApp = html => (local() ? '' : html);
@@ -144,7 +144,7 @@
     if (!s.isOpen) return copyJump('r:' + s.id, cResume(p, s), 'Resume', 'resume ' + short(s.id));
     if (s.url) {
       const sshKey = s.kind === 'background' ? 'ssh:' + s.id : null;
-      const sshCmd = sshKey ? cAttach(s.id) : null;
+      const sshCmd = sshKey ? cAttach(s) : null;
       if (sshKey) cmdMap[sshKey] = sshCmd;
       return {
         type: 'link', key: site + ':' + s.id, url: s.url, sid: short(s.id),
@@ -152,7 +152,7 @@
         sshKey, sshCmd,
       };
     }
-    if (s.kind === 'background') return copyJump(s.id, cAttach(s.id), 'Jump in', 'attach ' + short(s.id));
+    if (s.kind === 'background') return copyJump(s.id, cAttach(s), 'Jump in', 'attach ' + short(s.id));
     return { type: 'none', key: 'none:' + s.id, hint: 'in a terminal', caption: 'Running in a terminal on ' + host() };
   }
 
