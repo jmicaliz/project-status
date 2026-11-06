@@ -6,6 +6,8 @@
   const TOKEN_KEY = 'project-status:token';
   const NOTICE_MS = 7000;
   const MOBILE_QUERY = '(max-width: 719px)';
+  const SPLIT_QUERY = '(min-width: 1280px)';
+  const PANE_WIDTH = 520;
   const COPY_MS = 2600;
   const DAY_MS = 864e5;
   const DORMANT_MS = 14 * DAY_MS;
@@ -24,6 +26,7 @@
 
   const app = document.getElementById('app');
   const mobileQuery = matchMedia(MOBILE_QUERY);
+  const splitQuery = matchMedia(SPLIT_QUERY);
 
   const state = {
     data: null,
@@ -37,6 +40,7 @@
     toastCmd: null,
     openMenuKey: null,
     mobile: mobileQuery.matches,
+    wide: splitQuery.matches,
     api: null,
     starting: null,
     notice: null,
@@ -45,6 +49,7 @@
     tokenError: '',
     confirmRemove: null,
     removing: null,
+    paneFor: null,
   };
   let cmdMap = {};
   let copyTimer = 0;
@@ -62,9 +67,12 @@
   const host = () => state.data?.host || location.hostname || 'localhost';
 
   function parseHash() {
-    const m = location.hash.match(/^#\/p\/(.+)$/);
-    return { name: m ? decodeURIComponent(m[1]) : null };
+    const m = location.hash.match(/^#\/p\/([^/]+)(\/full)?$/);
+    return { name: m ? decodeURIComponent(m[1]) : null, full: !!(m && m[2]) };
   }
+
+  const canSplit = () => state.wide && !state.mobile;
+  const listShown = v => !v.name || (canSplit() && !v.full);
 
   function span(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
@@ -354,7 +362,17 @@
     </section>`;
   }
 
-  function desktopProjectRow(p) {
+  function desktopProjectRow(p, selected) {
+    if (selected !== undefined) {
+      const on = p.name === selected;
+      return `<div class="proj-grid compact rule-soft hov${on ? ' is-selected' : ''}" data-act="go" data-name="${esc(p.name)}" tabindex="0" role="link"${on ? ' aria-current="page"' : ''} style="align-items:start;padding:14px 10px;border-radius:8px">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+          <span class="mono" style="font-size:14px;font-weight:500">${esc(p.name)}</span>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px">${badges(p)}</div>
+        </div>
+        <div class="clamp3" style="font-size:13px;line-height:1.5;text-wrap:pretty">${nowText(p)}</div>
+      </div>`;
+    }
     const j = jumpFor(p, p.target, 'row');
     const next2 = p.next.slice(0, 2).map((t, i) => `<div style="display:flex;gap:8px;min-width:0"><span class="mono faint" style="font-size:12px;padding-top:1px">${i + 1}</span><span class="ellipsis">${esc(t)}</span></div>`).join('');
     const more = p.next.length > 2 ? `<span class="faint" style="font-size:12px;padding-left:18px">+${p.next.length - 2} more</span>` : '';
@@ -380,9 +398,16 @@
     </div>`;
   }
 
-  function desktopDormant(m) {
+  function desktopDormant(m, selected) {
     if (!m.dormant.length) return '';
     const rows = state.dormantOpen ? m.dormant.map(p => {
+      if (selected !== undefined) {
+        const on = p.name === selected;
+        return `<div class="proj-grid compact hov muted${on ? ' is-selected' : ''}" data-act="go" data-name="${esc(p.name)}" tabindex="0" role="link"${on ? ' aria-current="page"' : ''} style="align-items:center;padding:10px;border-radius:8px">
+          <span class="mono" style="font-size:13px">${esc(p.name)}</span>
+          <span class="faint ellipsis" style="font-size:13px">${esc(p.summary || p.desc)}</span>
+        </div>`;
+      }
       const j = jumpFor(p, null, 'dormant');
       const desc = [p.desc, p.summary].filter(Boolean).join(' — ');
       return `<div class="dormant-grid hov muted" data-act="go" data-name="${esc(p.name)}" tabindex="0" role="link" style="padding:10px;border-radius:8px">
@@ -483,17 +508,21 @@
     </section>`;
   }
 
-  function desktopOverview(m, offline) {
-    return `<main style="display:flex;flex-direction:column;gap:32px;padding:24px 32px 72px;max-width:1240px">
+  function desktopOverview(m, offline, selected) {
+    const compact = selected !== undefined;
+    const heads = compact
+      ? '<span>Project</span><span>Now</span>'
+      : '<span>Project</span><span>Now</span><span>Next</span><span>Sessions</span><span style="text-align:right">Jump in</span>';
+    return `<main style="display:flex;flex-direction:column;gap:32px;padding:24px 32px 72px;${compact ? 'min-width:0' : 'max-width:1240px'}">
       ${offline ? desktopOfflineBanner() : ''}
       ${desktopNeeds(m, offline)}
       <section style="display:flex;flex-direction:column">
         <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px"><h2 class="h-section">Projects</h2><span class="count">${m.active.length} active</span></div>
-        <div class="proj-grid rule-b" style="padding:6px 10px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--faint)">
-          <span>Project</span><span>Now</span><span>Next</span><span>Sessions</span><span style="text-align:right">Jump in</span>
+        <div class="proj-grid${compact ? ' compact' : ''} rule-b" style="padding:6px 10px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--faint)">
+          ${heads}
         </div>
-        ${m.active.map(desktopProjectRow).join('')}
-        ${desktopDormant(m)}
+        ${m.active.map(p => desktopProjectRow(p, selected)).join('')}
+        ${desktopDormant(m, selected)}
       </section>
       ${usageSection(m, false)}
     </main>`;
@@ -618,17 +647,17 @@
     </div>`;
   }
 
-  function desktopDetail(p) {
-    const j = jumpFor(p, p.target, 'head');
-    let action;
+  function detailAction(p, j) {
     if (j.type === 'link') {
-      action = `<div class="jgroup" data-jmenu style="gap:6px">
+      return `<div class="jgroup" data-jmenu style="gap:6px">
         <a class="btn btn-primary" href="${esc(j.url)}" target="_blank" rel="noopener" data-act="link" style="min-height:38px;font-size:15px;white-space:nowrap"><i class="ph ph-arrow-square-out"></i>Open in Claude</a>
         ${menuButton(j, 38, 17)}${menuHtml(j, 340)}
       </div>`;
-    } else {
-      action = copyButton(j, { label: 'Jump in', style: 'min-width:132px;min-height:38px;font-size:15px' });
     }
+    return copyButton(j, { label: 'Jump in', style: 'min-width:132px;min-height:38px;font-size:15px' });
+  }
+
+  function detailSessions(p) {
     const sessions = [];
     if (p.open.length) {
       sessions.push(`<div style="display:flex;flex-direction:column"><span class="muted" style="font-size:12px;font-weight:500">Open · ${p.open.length}</span>${p.open.map(s => sessionRow(p, s, { mobile: false })).join('')}</div>`);
@@ -649,8 +678,73 @@
         </div>
       </div>`);
     }
+    return `<aside class="panel" style="display:flex;flex-direction:column;gap:18px;padding:16px 20px 18px;border-radius:12px">
+      ${sessionsHeading(p, false)}
+      ${sessions.join('')}
+    </aside>`;
+  }
+
+  function detailStatus(p) {
+    return `<section style="display:flex;flex-direction:column;gap:8px">
+        <h2 class="h-label">Now</h2>
+        <p style="font-size:17px;line-height:1.5;margin:0;text-wrap:pretty;max-width:62ch">${nowText(p)}</p>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:8px">
+        <h2 class="h-label">Blocked</h2>
+        ${p.blocked.length ? blockedRows(p, 8) : '<span class="faint" style="font-size:14px">Nothing blocked.</span>'}
+      </section>
+      <section style="display:flex;flex-direction:column;gap:4px">
+        <h2 class="h-label" style="margin-bottom:4px">Next</h2>
+        ${nextRows(p)}
+      </section>`;
+  }
+
+  function detailUpdated(p) {
+    return `<section style="display:flex;flex-direction:column;gap:6px">
+        <h2 class="h-label">Last updated</h2>
+        ${p.updatedAt
+          ? `<div style="font-size:14px"><span style="font-weight:500">${esc(when(p.updatedAt))}</span> <span class="faint">· ${ago(ts(p.updatedAt))}</span></div>${p.summary ? `<div class="muted" style="font-size:14px">${esc(p.summary)}</div>` : ''}`
+          : '<div class="faint" style="font-size:14px">No status file yet.</div>'}
+      </section>`;
+  }
+
+  function desktopPane(p) {
+    const j = jumpFor(p, p.target, 'head');
+    return `<aside class="pane" aria-label="${esc(p.name)} details" style="width:${PANE_WIDTH}px">
+      <div style="display:flex;flex-direction:column;gap:24px;padding:20px 24px 48px">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;align-items:flex-start;gap:8px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0">
+              <h1 class="mono" style="font-size:22px;margin:0;letter-spacing:-0.02em;overflow-wrap:anywhere">${esc(p.name)}</h1>
+              ${badges(p, true)}
+            </div>
+            <button class="btn btn-ghost btn-icon" data-act="go" data-name="${esc(p.name)}" data-full="1" title="Expand to full page" aria-label="Expand to full page" style="width:32px;height:32px;color:var(--muted);flex:none"><i class="ph ph-arrows-out-simple" style="font-size:16px"></i></button>
+            <button class="btn btn-ghost btn-icon" data-act="go" title="Close (Esc)" aria-label="Close details" style="width:32px;height:32px;color:var(--muted);flex:none"><i class="ph ph-x" style="font-size:16px"></i></button>
+          </div>
+          <div class="muted" style="font-size:14px">${esc(p.desc)} <span class="mono faint" style="font-size:12px">${p.desc ? '· ' : ''}${esc(p.path)}</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:6px">
+          ${detailAction(p, j)}
+          <code class="faint" style="font-size:11px;overflow-wrap:anywhere">${esc(j.caption)}</code>
+        </div>
+        ${staleCallout(p, false)}
+        ${detailStatus(p)}
+        ${detailSessions(p)}
+        ${detailUpdated(p)}
+      </div>
+    </aside>`;
+  }
+
+  function desktopDetail(p) {
+    const j = jumpFor(p, p.target, 'head');
+    const collapse = canSplit()
+      ? `<button class="btn btn-ghost" data-act="go" data-name="${esc(p.name)}" style="color:var(--muted);padding:4px 8px 4px 6px"><i class="ph ph-arrows-in-simple"></i>Collapse to side</button>`
+      : '';
     return `<main style="display:flex;flex-direction:column;gap:24px;padding:16px 32px 72px;max-width:1240px">
-      <button class="btn btn-ghost" data-act="go" style="align-self:flex-start;color:var(--muted);padding:4px 8px 4px 4px"><i class="ph ph-arrow-left"></i>All projects</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost" data-act="go" style="color:var(--muted);padding:4px 8px 4px 4px"><i class="ph ph-arrow-left"></i>All projects</button>
+        ${collapse}
+      </div>
       <div style="display:flex;align-items:flex-start;gap:24px">
         <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -660,36 +754,17 @@
           <div class="muted" style="font-size:14px">${esc(p.desc)} <span class="mono faint" style="font-size:12px">${p.desc ? '· ' : ''}${esc(p.path)}</span></div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          ${action}
+          ${detailAction(p, j)}
           <code class="faint" style="font-size:11px">${esc(j.caption)}</code>
         </div>
       </div>
       ${staleCallout(p, false)}
       <div style="display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:40px;align-items:start">
         <div style="display:flex;flex-direction:column;gap:28px">
-          <section style="display:flex;flex-direction:column;gap:8px">
-            <h2 class="h-label">Now</h2>
-            <p style="font-size:17px;line-height:1.5;margin:0;text-wrap:pretty;max-width:62ch">${nowText(p)}</p>
-          </section>
-          <section style="display:flex;flex-direction:column;gap:8px">
-            <h2 class="h-label">Blocked</h2>
-            ${p.blocked.length ? blockedRows(p, 8) : '<span class="faint" style="font-size:14px">Nothing blocked.</span>'}
-          </section>
-          <section style="display:flex;flex-direction:column;gap:4px">
-            <h2 class="h-label" style="margin-bottom:4px">Next</h2>
-            ${nextRows(p)}
-          </section>
-          <section style="display:flex;flex-direction:column;gap:6px">
-            <h2 class="h-label">Last updated</h2>
-            ${p.updatedAt
-              ? `<div style="font-size:14px"><span style="font-weight:500">${esc(when(p.updatedAt))}</span> <span class="faint">· ${ago(ts(p.updatedAt))}</span></div>${p.summary ? `<div class="muted" style="font-size:14px">${esc(p.summary)}</div>` : ''}`
-              : '<div class="faint" style="font-size:14px">No status file yet.</div>'}
-          </section>
+          ${detailStatus(p)}
+          ${detailUpdated(p)}
         </div>
-        <aside class="panel" style="display:flex;flex-direction:column;gap:18px;padding:16px 20px 18px;border-radius:12px">
-          ${sessionsHeading(p, false)}
-          ${sessions.join('')}
-        </aside>
+        ${detailSessions(p)}
       </div>
     </main>`;
   }
@@ -924,7 +999,17 @@
     if (state.mobile) {
       app.innerHTML = mobileHeader(detail, offline) + (detail ? mobileDetail(detail) : mobileOverview(m, offline));
     } else {
-      app.innerHTML = desktopHeader(offline) + (detail ? desktopDetail(detail) : desktopOverview(m, offline)) + desktopToast();
+      const paneScroll = app.querySelector('.pane')?.scrollTop || 0;
+      let body;
+      if (!detail) body = desktopOverview(m, offline);
+      else if (!listShown(state.view)) body = desktopDetail(detail);
+      else body = `<div class="split">${desktopOverview(m, offline, detail.name)}${desktopPane(detail)}</div>`;
+      app.innerHTML = desktopHeader(offline) + body + desktopToast();
+      const header = app.querySelector('.desktop-header');
+      if (header) app.style.setProperty('--header-h', header.offsetHeight + 'px');
+      const pane = app.querySelector('.pane');
+      if (pane && state.paneFor === detail.name) pane.scrollTop = paneScroll;
+      state.paneFor = pane ? detail.name : null;
     }
     app.insertAdjacentHTML('beforeend', startPanel());
     keepMenuOnScreen();
@@ -1116,8 +1201,8 @@
     setTimeout(refresh, 8000);
   }
 
-  function navigate(name) {
-    const hash = name ? '#/p/' + encodeURIComponent(name) : '#/';
+  function navigate(name, full) {
+    const hash = name ? '#/p/' + encodeURIComponent(name) + (full ? '/full' : '') : '#/';
     if (location.hash === hash || (!name && !location.hash)) {
       state.view = parseHash();
       render();
@@ -1140,7 +1225,7 @@
     if (!el || !app.contains(el)) return;
     switch (el.dataset.act) {
       case 'link': return;
-      case 'go': navigate(el.dataset.name || null); return;
+      case 'go': navigate(el.dataset.name || null, !!el.dataset.full); return;
       case 'copy': copy(el.dataset.key, false); return;
       case 'ssh': copy(el.dataset.key, true); return;
       case 'menu':
@@ -1207,14 +1292,23 @@
       state.tokenAsk = null;
       state.tokenDraft = '';
       render();
+    } else if (e.key === 'Escape' && state.view.name && !state.view.full && canSplit()) {
+      navigate(null);
     }
   });
 
   window.addEventListener('hashchange', () => {
+    const prev = state.view;
     state.view = parseHash();
     state.openMenuKey = null;
     render();
-    window.scrollTo(0, 0);
+    if (!(listShown(prev) && listShown(state.view))) window.scrollTo(0, 0);
+  });
+
+  splitQuery.addEventListener('change', e => {
+    state.wide = e.matches;
+    state.openMenuKey = null;
+    render();
   });
 
   mobileQuery.addEventListener('change', e => {

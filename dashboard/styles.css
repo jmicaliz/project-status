@@ -240,3 +240,13 @@ code { font-family: var(--mono); }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .btn:disabled { opacity: 0.55; cursor: default; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.pane {
+  position: sticky; top: var(--header-h, 57px);
+  height: calc(100vh - var(--header-h, 57px)); overflow-y: auto;
+  border-left: 1px solid var(--line);
+}
+.proj-grid.compact { grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr); }
+.hov.is-selected,
+.hov.is-selected:hover { background-color: var(--accent-tint); }
