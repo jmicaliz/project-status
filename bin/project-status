@@ -150,9 +150,9 @@ cmd_ls() {
         text = now[i]
         if (width > 0 && room > 3 && length(text) > room) text = substr(text, 1, room - 3) "..."
         code = (rank[i] < 4) ? tint[rank[i] + 1] : 0
-        printf "%s%s%s%s\n", pad(name[i], wn), paint(pad(counts[i], ws), code), paint(pad(flags[i], wf), flags[i] == "" ? 0 : 33), text
+        printf "%s%s%s%s\n", pad(name[i], wn), paint(pad(counts[i], ws), code), paint(pad(flags[i], wf), (flags[i] == "" ? 0 : 33)), text
       }
-      if (dormant > 0) printf "\n%d dormant repo%s hidden; use --all to show.\n", dormant, dormant == 1 ? "" : "s"
+      if (dormant > 0) printf "\n%d dormant repo%s hidden; use --all to show.\n", dormant, (dormant == 1 ? "" : "s")
     }'
 }
 
@@ -193,7 +193,7 @@ cmd_needs() {
           for (i = 1; i <= n; i++) {
             k = kind[i] sprintf("%" (wk - length(kind[i]) + 2) "s", "")
             if (color == "true") k = "\033[" tint[kind[i]] "m" k "\033[0m"
-            printf "%s%s%s%s\n", k, repo[i] sprintf("%" (wr - length(repo[i]) + 2) "s", ""), text[i], detail[i] == "" ? "" : " (" detail[i] ")"
+            printf "%s%s%s%s\n", k, repo[i] sprintf("%" (wr - length(repo[i]) + 2) "s", ""), text[i], (detail[i] == "" ? "" : " (" detail[i] ")")
           }
         }'
     fi

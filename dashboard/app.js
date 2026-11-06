@@ -301,7 +301,7 @@
   function isOffline() {
     if (state.fetchFailed) return true;
     if (!state.data) return false;
-    return Date.now() - ts(state.data.generatedAt) > 2 * interval() * 1000;
+    return Date.now() - ts(state.data.generatedAt) > 4 * interval() * 1000;
   }
 
   const themeIcon = () => (state.theme === 'dark' ? 'ph-sun' : 'ph-moon');
