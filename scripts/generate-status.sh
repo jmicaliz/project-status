@@ -120,13 +120,16 @@ first_prompts() {
 
 refresh_tokens() {
   local id=$1 key=$2 file=$3 cache="$USAGE_DIR/tokens/$1.json"
-  grep -F '"usage"' "$file" | jq -R -n -c --arg k "$key" '
+  if grep -F '"usage"' "$file" | jq -R -n -c --arg k "$key" '
     reduce (inputs | fromjson? | select(.type == "assistant" and .message.id and .message.usage)) as $l
       ({}; .[$l.message.id] = $l.message.usage)
     | [.[]] | def total(f): map(f // 0) | add // 0;
     {key: $k, tokens: {messages: length, input: total(.input_tokens), cacheWrite: total(.cache_creation_input_tokens),
-     cacheRead: total(.cache_read_input_tokens), output: total(.output_tokens)}}' >"$cache.$$" 2>/dev/null &&
-    mv "$cache.$$" "$cache" || rm -f "$cache.$$"
+     cacheRead: total(.cache_read_input_tokens), output: total(.output_tokens)}}' >"$cache.$$" 2>/dev/null; then
+    mv "$cache.$$" "$cache"
+  else
+    rm -f "$cache.$$"
+  fi
 }
 
 session_repo() {

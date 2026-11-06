@@ -24,6 +24,7 @@ repo_path_file() {
   printf '%s/.repos/%s\n' "$STATUS_DIR" "$1"
 }
 
+# shellcheck disable=SC2034 # read by the scripts that source this file
 if stat -c %Y / >/dev/null 2>&1; then
   MTIME_FLAGS=(-c %Y)
   BTIME_FLAGS=(-c %W)
