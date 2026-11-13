@@ -172,28 +172,6 @@ resolve_path() {
   printf '%s\n' "${ROOTS%% *}/$name"
 }
 
-parse_status() {
-  awk '
-    FNR == 1 { titled = 0; described = 0; sec = ""; name = FILENAME; sub(/^.*\//, "", name); sub(/\.md$/, "", name) }
-    /^# / && !titled { titled = 1; next }
-    /^## / { sec = tolower(substr($0, 4)); sub(/[[:space:]]+$/, "", sec); next }
-    /^[[:space:]]*$/ { next }
-    {
-      line = $0
-      if (sec == "") {
-        if (!described) { sub(/^> ?/, "", line); print name "\tdesc\t" line; described = 1 }
-        next
-      }
-      if (match(line, /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+/)) {
-        print name "\t" sec "\t" substr(line, RLENGTH + 1)
-      } else {
-        sub(/^[[:space:]]+/, "", line)
-        print name "\t" sec "+\t" line
-      }
-    }
-  ' "$@"
-}
-
 now=$(date +%s)
 sessions_json >"$work/agents.json"
 jq -e 'type == "array"' "$work/agents.json" >/dev/null 2>&1 || echo '[]' >"$work/agents.json"
@@ -294,7 +272,7 @@ cat /dev/null "$work"/newest.* >"$work/newest.tsv" 2>/dev/null || : >"$work/newe
 jq -n -c \
   --rawfile names "$work/names" --rawfile paths "$work/paths.tsv" --rawfile parsed "$work/parsed.tsv" \
   --rawfile times "$work/times" --rawfile newest "$work/newest.tsv" \
-  --arg home "$HOME" --arg dir "$STATUS_DIR" --argjson now "$now" '
+  --arg home "$HOME" --arg dir "$STATUS_DIR" --argjson now "$now" "$STATUS_JQ"'
   def rows($t): $t | split("\n") | map(select(length > 0) | split("\t"));
   (rows($paths) | map({key: .[0], value: .[1]}) | from_entries) as $pathOf
   | (rows($newest) | map({key: .[0], value: (.[1] | tonumber? // 0)}) | from_entries) as $newestOf
@@ -306,11 +284,7 @@ jq -n -c \
   | ($timesOf[$name] != null) as $hasStatus
   | ($timesOf[$name] // {mt: 0, bt: 0}) as $t
   | ($pathOf[$name] // "") as $path
-  | (reduce ($rowsOf[$name] // [])[] as $r ({};
-      if ($r.k | endswith("+")) then
-        ($r.k | rtrimstr("+")) as $k
-        | .[$k] |= (if (. // []) | length > 0 then .[:-1] + [.[-1] + " " + $r.v] else [$r.v] end)
-      else .[$r.k] += [$r.v] end)) as $s
+  | ($rowsOf[$name] // [] | status_sections) as $s
   | {
       name: $name,
       path: (if ($path | startswith($home + "/")) then "~" + ($path | ltrimstr($home)) else $path end),
@@ -320,7 +294,7 @@ jq -n -c \
       next: (($s.next // []) | map(select(test("^\\(none yet\\)$") | not))),
       blocked: (($s.blocked // [])
         | map(select(test("^none\\.?$"; "i") | not)
-          | (capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)\\s*$") // {text: ., since: null}))),
+          | blocked_item)),
       updatedAt: (if $hasStatus then ($t.mt | todate) else null end),
       summary: (($s["last updated"] // [""])[0]
         | sub("^\\d{4}-\\d{2}-\\d{2}:?\\s*"; "")

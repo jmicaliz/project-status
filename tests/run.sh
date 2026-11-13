@@ -318,6 +318,30 @@ check "cli: start refuses a missing Next item and a prompt with --next" '! cli s
 check "cli: show prints the status file" 'cli show demo | grep "^Demo project for tests" >/dev/null'
 check "cli: edit opens the status file in EDITOR" '[ "$(EDITOR=echo cli edit demo)" = "$status" ]'
 check "cli: show and edit refuse a repo with no status file" '! cli show nope 2>/dev/null && ! EDITOR=echo cli edit nope 2>/dev/null'
+check "cli: path prints the repo's status file path" '[ "$(cli path demo)" = "$status" ] && [ "$(cd "$repo" && cli path)" = "$status" ]'
+
+lint_file="$WORK/lint.md"
+lint_doc() {
+  printf '# demo status\n\n%s\n\n%s\n\n- Writing lint.\n\n## Next\n\n1. Ship it.\n\n## Blocked\n\n%s\n\n## Last updated\n\n%s\n' \
+    "${DESC-Demo project for tests}" "${NOW-## Now}" \
+    "${BLOCKED-"- Waiting on review (since 2026-10-29)
+- Waiting on a vendor
+  reply (since 2026-11-01)"}" \
+    "${UPDATED-"- 2026-11-13: added lint."}" >"$lint_file"
+}
+lint_fails() { ! cli lint "$lint_file" >"$WORK/lint-out" && [ "$(wc -l <"$WORK/lint-out")" -eq 1 ] && grep -q "$1" "$WORK/lint-out"; }
+check "lint: a file that follows the rules passes silently" 'lint_doc && [ -z "$(cli lint "$lint_file")" ]'
+check "lint: Blocked may be exactly None." 'BLOCKED="- None." lint_doc && cli lint "$lint_file" >/dev/null'
+check "lint: defaults to the current repo's file" '! (cd "$repo" && cli lint) >"$WORK/lint-out" && [ "$(cat "$WORK/lint-out")" = "$status: Blocked item must end with (since YYYY-MM-DD), or the section must be exactly \"None.\": Undated blocker" ]'
+check "lint: sections renamed or out of order" 'NOW="## Later" lint_doc && lint_fails "in that order; found ## Later, ## Next"'
+check "lint: placeholder description" 'DESC="(one-line project description)" lint_doc && lint_fails "still the placeholder"'
+check "lint: missing description" 'DESC= lint_doc && lint_fails "missing the one-line project description"'
+check "lint: 40 lines or more" 'UPDATED="- 2026-11-13: added lint.$(printf "\n  more%.0s" $(seq 20))" lint_doc && lint_fails "keep it under 40"'
+check "lint: Blocked item without a since date" 'BLOCKED="- Waiting on review" lint_doc && lint_fails "Waiting on review$"'
+check "lint: empty Blocked section" 'BLOCKED= lint_doc && lint_fails "Blocked is empty"'
+check "lint: Last updated without a valid date" 'UPDATED="- 2026-02-30: added lint." lint_doc && lint_fails "valid YYYY-MM-DD"'
+check "lint: never modifies the file" 'UPDATED="- yesterday" lint_doc && cp "$lint_file" "$WORK/lint-before.md" && ! cli lint "$lint_file" >/dev/null && cmp -s "$lint_file" "$WORK/lint-before.md"'
+check "lint: refuses a missing file" '! cli lint "$WORK/nope.md" 2>/dev/null'
 jq --arg repo "$repo" '[{cwd: $repo, kind: "background", sessionId: "abcd1234-0000-4000-8000-000000000000", status: "idle"}, {cwd: $repo, kind: "interactive", sessionId: "eeee5555-0000-4000-8000-000000000000", status: "idle"}]' >"$WORK/cli-rm.json" <<<'null'
 check "cli: rm -y removes a background session by id prefix" 'SESSIONS="$WORK/cli-rm.json" cli rm -y abcd | grep "^Removed abcd1234" >/dev/null && [ "$(log_args)" = "abcd1234 " ]'
 check "cli: rm without -y off a terminal is refused" '! SESSIONS="$WORK/cli-rm.json" cli rm abcd </dev/null 2>"$WORK/cli-err" && grep -q "pass -y" "$WORK/cli-err"'

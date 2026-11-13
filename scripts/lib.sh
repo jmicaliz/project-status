@@ -20,6 +20,54 @@ status_file() {
   printf '%s/%s.md\n' "$STATUS_DIR" "$1"
 }
 
+user_or_default() {
+  if [ -f "$STATUS_DIR/$1" ]; then
+    printf '%s\n' "$STATUS_DIR/$1"
+  else
+    printf '%s\n' "$PLUGIN_ROOT/$2"
+  fi
+}
+
+rules_file() {
+  user_or_default _rules.md RULES.md
+}
+
+template_file() {
+  user_or_default _template.md template.md
+}
+
+parse_status() {
+  awk '
+    FNR == 1 { titled = 0; described = 0; sec = ""; name = FILENAME; sub(/^.*\//, "", name); sub(/\.md$/, "", name) }
+    /^# / && !titled { titled = 1; next }
+    /^## / { sec = substr($0, 4); sub(/[[:space:]]+$/, "", sec); print name "\t#\t" sec; sec = tolower(sec); next }
+    /^[[:space:]]*$/ { next }
+    {
+      line = $0
+      if (sec == "") {
+        if (!described) { sub(/^> ?/, "", line); print name "\tdesc\t" line; described = 1 }
+        next
+      }
+      if (match(line, /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+/)) {
+        print name "\t" sec "\t" substr(line, RLENGTH + 1)
+      } else {
+        sub(/^[[:space:]]+/, "", line)
+        print name "\t" sec "+\t" line
+      }
+    }
+  ' "$@"
+}
+
+# shellcheck disable=SC2016,SC2034 # jq source, read by the scripts that source this file
+STATUS_JQ='
+  def status_sections: reduce .[] as $r ({};
+    if ($r.k | endswith("+")) then
+      ($r.k | rtrimstr("+")) as $k
+      | .[$k] |= (if (. // []) | length > 0 then .[:-1] + [.[-1] + " " + $r.v] else [$r.v] end)
+    else .[$r.k] += [$r.v] end);
+  def blocked_item: capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)\\s*$") // {text: ., since: null};
+'
+
 repo_path_file() {
   printf '%s/.repos/%s\n' "$STATUS_DIR" "$1"
 }
