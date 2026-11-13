@@ -16,6 +16,9 @@ repo_name() {
   basename "$(dirname "$common")"
 }
 
+# shellcheck disable=SC2034 # read by the scripts that source this file
+readonly DESC_PLACEHOLDER="(one-line project description)"
+
 status_file() {
   printf '%s/%s.md\n' "$STATUS_DIR" "$1"
 }

@@ -319,6 +319,7 @@ check "cli: show prints the status file" 'cli show demo | grep "^Demo project fo
 check "cli: edit opens the status file in EDITOR" '[ "$(EDITOR=echo cli edit demo)" = "$status" ]'
 check "cli: show and edit refuse a repo with no status file" '! cli show nope 2>/dev/null && ! EDITOR=echo cli edit nope 2>/dev/null'
 check "cli: path prints the repo's status file path" '[ "$(cli path demo)" = "$status" ] && [ "$(cd "$repo" && cli path)" = "$status" ]'
+check "cli: path fails outside a repo" '! (cd "$WORK" && cli path) >"$WORK/path-out" 2>/dev/null && [ ! -s "$WORK/path-out" ]'
 
 lint_file="$WORK/lint.md"
 lint_doc() {
@@ -338,6 +339,7 @@ check "lint: placeholder description" 'DESC="(one-line project description)" lin
 check "lint: missing description" 'DESC= lint_doc && lint_fails "missing the one-line project description"'
 check "lint: 40 lines or more" 'UPDATED="- 2026-11-13: added lint.$(printf "\n  more%.0s" $(seq 20))" lint_doc && lint_fails "keep it under 40"'
 check "lint: Blocked item without a since date" 'BLOCKED="- Waiting on review" lint_doc && lint_fails "Waiting on review$"'
+check "lint: Blocked item with an invalid since date" 'BLOCKED="- Waiting (since 2026-02-30)" lint_doc && lint_fails "2026-02-30)$"'
 check "lint: empty Blocked section" 'BLOCKED= lint_doc && lint_fails "Blocked is empty"'
 check "lint: Last updated without a valid date" 'UPDATED="- 2026-02-30: added lint." lint_doc && lint_fails "valid YYYY-MM-DD"'
 check "lint: never modifies the file" 'UPDATED="- yesterday" lint_doc && cp "$lint_file" "$WORK/lint-before.md" && ! cli lint "$lint_file" >/dev/null && cmp -s "$lint_file" "$WORK/lint-before.md"'

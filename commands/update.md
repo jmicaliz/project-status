@@ -1,7 +1,7 @@
 ---
 description: Record progress, a decision, or a cleared blocker in this repo's status file now
 argument-hint: "[what changed]"
-allowed-tools: Read, Edit, Write, Bash(*/bin/project-status path), Bash(*/bin/project-status lint *)
+allowed-tools: Read, Edit, Write, Bash(*/bin/project-status* path), Bash(*/bin/project-status* lint *)
 ---
 
 Update this repo's project status file now.

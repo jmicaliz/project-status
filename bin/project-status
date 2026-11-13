@@ -309,7 +309,9 @@ cmd_show() {
 
 cmd_path() {
   [ $# -le 1 ] || die "path: too many arguments"
-  status_file "$(resolve_repo "${1:-}")"
+  local repo
+  repo=$(resolve_repo "${1:-}")
+  status_file "$repo"
 }
 
 cmd_edit() {
@@ -322,17 +324,17 @@ cmd_edit() {
 
 cmd_lint() {
   [ $# -le 1 ] || die "lint: too many arguments"
-  local file placeholder
+  local file repo
   if [ $# -eq 1 ]; then
     file=$1
     [ -f "$file" ] || die "lint: no such file: $file"
   else
-    file=$(existing_status_file "$(resolve_repo "")")
+    repo=$(resolve_repo "")
+    file=$(existing_status_file "$repo")
   fi
-  placeholder=$(parse_status "$(template_file)" | awk -F '\t' '$2 == "desc" { print $3; exit }')
   parse_status "$file" >"$work/parsed.tsv"
-  jq -rn --rawfile parsed "$work/parsed.tsv" --arg file "$file" --arg placeholder "$placeholder" \
-    --argjson lines "$(($(wc -l <"$file")))" "$STATUS_JQ"'
+  jq -rn --rawfile parsed "$work/parsed.tsv" --arg file "$file" --arg placeholder "$DESC_PLACEHOLDER" \
+    --argjson lines "$(awk 'END { print NR }' "$file")" "$STATUS_JQ"'
     def valid_date: . as $d | (try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == $d;
     def headings: map("## " + .) | join(", ");
     ["Now", "Next", "Blocked", "Last updated"] as $want
@@ -350,7 +352,7 @@ cmd_lint() {
       (select($have | index("Blocked")) | ($s.blocked // []) as $b
         | if $b == ["None."] then empty
           elif $b == [] then "## Blocked is empty; write \"None.\""
-          else $b[] | select(blocked_item.since == null) | "Blocked item must end with (since YYYY-MM-DD), or the section must be exactly \"None.\": \(.)"
+          else $b[] | select(blocked_item.since | . == null or (valid_date | not)) | "Blocked item must end with (since YYYY-MM-DD), or the section must be exactly \"None.\": \(.)"
           end),
       (select($have | index("Last updated")) | ($s["last updated"] // [""])[0]
         | (capture("^(?<d>\\d{4}-\\d{2}-\\d{2})").d // "") as $d

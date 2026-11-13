@@ -4,7 +4,6 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 readonly MAX_CONTEXT=9500
-readonly DESC_PLACEHOLDER="(one-line project description)"
 
 input=$(cat)
 cwd=$(hook_cwd "$input")
