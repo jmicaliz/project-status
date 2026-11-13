@@ -8,6 +8,7 @@ Status files live centrally at `~/.project-status/<repo>.md`, not inside each re
 
 - **SessionStart hook**: records the repo's path in `~/.project-status/.repos/<repo>` for the dashboard, creates `~/.project-status/<repo>.md` from `~/.project-status/_template.md` if it's missing, then injects the file's path, its contents, and the maintenance rules from `~/.project-status/_rules.md` into context. Runs on startup, resume, clear, compact, and fork. Your `~/.claude/CLAUDE.md` is never touched.
 - **Stop hook**: if the newest change in the working tree (latest commit time, or mtime of any modified or untracked file) is newer than the status file, it tells Claude to update the file before finishing. It does nothing when `stop_hook_active` is set, so it fires at most once per turn.
+- **`/project-status:update [what changed]`**: records progress that left no code change (a decision, a cleared blocker, a manual deploy) now, instead of relying on Claude to remember the rule. It re-reads the file, folds in your note and what the session established, then runs `project-status lint` and fixes what it reports.
 - Directories that aren't git repos are ignored silently.
 
 ## Requirements
@@ -70,7 +71,9 @@ project-status attach repo id         # attach to that session, or resume it if 
 project-status start [repo] [prompt]  # start a background session in a fresh worktree, like the dashboard's Start
 project-status start --next 2         # use item 2 of the repo's Next list as the prompt; --attach jumps in
 project-status show [repo]            # print the status file
+project-status path [repo]            # print its path
 project-status edit [repo]            # open it in $VISUAL or $EDITOR
+project-status lint [file]            # check a status file against the rules; one line per problem, exits 1 if any
 project-status rm <id> [-y]           # remove a background session; asks first unless -y
 ```
 

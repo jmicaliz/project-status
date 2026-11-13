@@ -4,7 +4,6 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 readonly MAX_CONTEXT=9500
-readonly DESC_PLACEHOLDER="(one-line project description)"
 
 input=$(cat)
 cwd=$(hook_cwd "$input")
@@ -13,8 +12,6 @@ repo=$(repo_name "$cwd") || exit 0
 file=$(status_file "$repo")
 
 render_template() {
-  local template="$STATUS_DIR/_template.md"
-  [ -f "$template" ] || template="$PLUGIN_ROOT/template.md"
   REPO="$repo" awk '{
     out = ""
     while ((i = index($0, "{{REPO}}")) > 0) {
@@ -22,7 +19,7 @@ render_template() {
       $0 = substr($0, i + 8)
     }
     print out $0
-  }' "$template"
+  }' "$(template_file)"
 }
 
 mkdir -p "$STATUS_DIR/.repos"
@@ -32,9 +29,7 @@ if [ ! -e "$file" ]; then
   (set -C; render_template >"$file") 2>/dev/null || true
 fi
 
-rules_file="$STATUS_DIR/_rules.md"
-[ -f "$rules_file" ] || rules_file="$PLUGIN_ROOT/RULES.md"
-rules=$(cat "$rules_file")
+rules=$(cat "$(rules_file)")
 contents=$(cat "$file")
 header="Project status file for repo \"$repo\": $file"
 if grep -qxF "$DESC_PLACEHOLDER" "$file"; then

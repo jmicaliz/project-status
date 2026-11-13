@@ -30,7 +30,10 @@ Commands:
   start [repo] [prompt]        Start a background session in a fresh worktree, like the dashboard's Start.
         [--next N] [--attach]  --next N uses item N of the repo's Next list as the prompt.
   show [repo]                  Print the repo's status file.
+  path [repo]                  Print the repo's status file path.
   edit [repo]                  Open the repo's status file in $VISUAL or $EDITOR.
+  lint [file]                  Check a status file against the rules: one line per problem, exit 1 if any.
+                               Defaults to the current repo's file.
   rm <id> [-y]                 Remove a background session (asks first unless -y).
 
 The repo defaults to the one you are in; "." also means the current repo.
@@ -304,12 +307,60 @@ cmd_show() {
   cat "$file"
 }
 
+cmd_path() {
+  [ $# -le 1 ] || die "path: too many arguments"
+  local repo
+  repo=$(resolve_repo "${1:-}")
+  status_file "$repo"
+}
+
 cmd_edit() {
   [ $# -le 1 ] || die "edit: too many arguments"
   local repo file
   repo=$(resolve_repo "${1:-}")
   file=$(existing_status_file "$repo")
   run sh -c "${VISUAL:-${EDITOR:-vi}} \"\$1\"" project-status "$file"
+}
+
+cmd_lint() {
+  [ $# -le 1 ] || die "lint: too many arguments"
+  local file repo
+  if [ $# -eq 1 ]; then
+    file=$1
+    [ -f "$file" ] || die "lint: no such file: $file"
+  else
+    repo=$(resolve_repo "")
+    file=$(existing_status_file "$repo")
+  fi
+  parse_status "$file" >"$work/parsed.tsv"
+  jq -rn --rawfile parsed "$work/parsed.tsv" --arg file "$file" --arg placeholder "$DESC_PLACEHOLDER" \
+    --argjson lines "$(awk 'END { print NR }' "$file")" "$STATUS_JQ"'
+    def valid_date: . as $d | (try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == $d;
+    def headings: map("## " + .) | join(", ");
+    ["Now", "Next", "Blocked", "Last updated"] as $want
+    | [$parsed | split("\n")[] | select(length > 0) | split("\t") | {k: .[1], v: (.[2:] | join("\t"))}] as $rows
+    | [$rows[] | select(.k == "#") | .v] as $have
+    | ($rows | status_sections) as $s
+    | (if $have != $want then
+        "sections must be exactly \($want | headings), in that order; found \(if $have == [] then "none" else $have | headings end)"
+       else empty end),
+      (($s.desc // [])[0] as $d
+        | if $d == null then "missing the one-line project description under the title"
+          elif $d == $placeholder then "the description under the title is still the placeholder \"\($d)\""
+          else empty end),
+      (if $lines >= 40 then "\($lines) lines; keep it under 40" else empty end),
+      (select($have | index("Blocked")) | ($s.blocked // []) as $b
+        | if $b == ["None."] then empty
+          elif $b == [] then "## Blocked is empty; write \"None.\""
+          else $b[] | select(blocked_item.since | . == null or (valid_date | not)) | "Blocked item must end with (since YYYY-MM-DD), or the section must be exactly \"None.\": \(.)"
+          end),
+      (select($have | index("Last updated")) | ($s["last updated"] // [""])[0]
+        | (capture("^(?<d>\\d{4}-\\d{2}-\\d{2})").d // "") as $d
+        | if $d | valid_date then empty else "## Last updated must start with a valid YYYY-MM-DD date: \(.)" end)
+    | "\($file): \(.)"
+  ' >"$work/lint.txt"
+  cat "$work/lint.txt"
+  [ ! -s "$work/lint.txt" ]
 }
 
 cmd_rm() {
@@ -349,7 +400,7 @@ cmd_rm() {
 }
 
 case "${1:-}" in
-  ls | needs | attach | start | show | edit | rm)
+  ls | needs | attach | start | show | path | edit | lint | rm)
     command=$1
     shift
     "cmd_$command" "$@"
