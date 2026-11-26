@@ -296,7 +296,7 @@ jq -n -c \
       path: (if ($path | startswith($home + "/")) then "~" + ($path | ltrimstr($home)) else $path end),
       hasStatus: $hasStatus,
       desc: (($s.desc // [""])[0] | if test("^\\(.*description\\)$") then "" else . end),
-      now: (($s.now // []) | join(" ")),
+      now: ($s.now // []),
       next: (($s.next // []) | map(select(test("^\\(none yet\\)$") | not))),
       blocked: (($s.blocked // []) | blocked_items
         | map(. as $b | . + {checked: (($checkedOf[$name] // {})[$b | checked_key] // null)})),

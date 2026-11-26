@@ -14,5 +14,5 @@ toplevel=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 [ "$(newest_change "$toplevel")" -gt "$(mtime "$file")" ] || exit 0
 
-reason="Code in this repo changed after the project status file was last updated. Before finishing, update $file following the project-status rules (Now / Next / Blocked / Last updated, under 40 lines, replace stale content, no log). Use the absolute path; do not create a status file inside the repo."
+reason="Code in this repo changed after the project status file was last updated. Before finishing, update $file following the project-status rules (Now / Next / Blocked / Last updated, at most 3 short Now bullets, under 40 lines, replace stale content, no log). Use the absolute path; do not create a status file inside the repo."
 jq -n --arg reason "$reason" '{hookSpecificOutput: {hookEventName: "Stop", additionalContext: $reason}}'

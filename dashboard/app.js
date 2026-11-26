@@ -176,6 +176,7 @@
         .map(c => ({ icon: ST[c.k].icon, color: ST[c.k].color, text: c.n + ' ' + ST[c.k].label.toLowerCase() }));
       return {
         ...raw,
+        now: [].concat(raw.now || []),
         next: raw.next || [],
         blocked: raw.blocked || [],
         sessions, open, recent, target, counts, lastActivity,
@@ -266,8 +267,19 @@
     return h;
   }
 
-  function nowText(p) {
-    if (p.now) return esc(p.now);
+  const inline = t => esc(t)
+    .replace(/^((?:[^:`(]|\([^)]*\)){1,60}?):(?=\s)/, '<strong style="font-weight:500">$1</strong>:')
+    .replace(/`([^`]+)`/g, '<code style="font-size:0.92em">$1</code>');
+
+  const moreLabel = (n, pad) => n > 0 ? `<span class="faint" style="font-size:12px;padding-left:${pad}">+${n} more</span>` : '';
+
+  function nowText(p, limit) {
+    if (p.now.length) {
+      const shown = limit ? p.now.slice(0, limit) : p.now;
+      const more = p.now.length - shown.length;
+      return `<ul class="now-list">${shown.map(t => `<li>${limit ? `<span class="clamp2">${inline(t)}</span>` : inline(t)}</li>`).join('')}</ul>`
+        + moreLabel(more, '1.1em');
+    }
     if (!p.hasStatus) return '<span class="faint">No status file yet. It is created when a session starts here.</span>';
     return '<span class="faint">Nothing recorded.</span>';
   }
@@ -372,12 +384,12 @@
           <span class="mono" style="font-size:14px;font-weight:500">${esc(p.name)}</span>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px">${badges(p)}</div>
         </div>
-        <div class="clamp3" style="font-size:13px;line-height:1.5;text-wrap:pretty">${nowText(p)}</div>
+        <div style="font-size:13px;line-height:1.5;text-wrap:pretty;min-width:0">${nowText(p, 2)}</div>
       </div>`;
     }
     const j = jumpFor(p, p.target, 'row');
-    const next2 = p.next.slice(0, 2).map((t, i) => `<div style="display:flex;gap:8px;min-width:0"><span class="mono faint" style="font-size:12px;padding-top:1px">${i + 1}</span><span class="ellipsis">${esc(t)}</span></div>`).join('');
-    const more = p.next.length > 2 ? `<span class="faint" style="font-size:12px;padding-left:18px">+${p.next.length - 2} more</span>` : '';
+    const next2 = p.next.slice(0, 2).map((t, i) => `<div style="display:flex;gap:8px;min-width:0"><span class="mono faint" style="font-size:12px;padding-top:1px">${i + 1}</span><span class="ellipsis">${inline(t)}</span></div>`).join('');
+    const more = moreLabel(p.next.length - 2, '18px');
     const counts = p.counts.length
       ? p.counts.map(c => `<span style="display:flex;align-items:center;gap:6px"><i class="ph-bold ${c.icon}" style="font-size:13px;color:${c.color}"></i>${esc(c.text)}</span>`).join('')
       : '<span class="faint">No sessions</span>';
@@ -387,7 +399,7 @@
         ${p.desc ? `<span class="faint" style="font-size:12px">${esc(p.desc)}</span>` : ''}
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px">${badges(p)}</div>
       </div>
-      <div class="clamp3" style="font-size:13px;line-height:1.5;text-wrap:pretty">${nowText(p)}</div>
+      <div style="font-size:13px;line-height:1.5;text-wrap:pretty;min-width:0">${nowText(p, 2)}</div>
       <div class="muted" style="display:flex;flex-direction:column;gap:3px;font-size:13px;min-width:0">${next2}${more}</div>
       <div class="muted" style="display:flex;flex-direction:column;gap:3px;font-size:12px">
         ${counts}
@@ -625,7 +637,7 @@
 
   function nextRows(p, mobile = false) {
     if (!p.next.length) return '<span class="faint" style="font-size:14px">Nothing queued.</span>';
-    return p.next.map((t, i) => `<div class="rule-soft" style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;font-size:14px"><span class="mono faint" style="font-size:12px;padding-top:2px;width:14px;flex:none">${i + 1}</span><span style="flex:1;min-width:0">${esc(t)}</span>${startButton(p, i, mobile)}</div>`).join('');
+    return p.next.map((t, i) => `<div class="rule-soft" style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;font-size:14px"><span class="mono faint" style="font-size:12px;padding-top:2px;width:14px;flex:none">${i + 1}</span><span style="flex:1;min-width:0">${inline(t)}</span>${startButton(p, i, mobile)}</div>`).join('');
   }
 
   function sessionsHeading(p, mobile) {
@@ -705,7 +717,7 @@
   function detailStatus(p) {
     return `<section style="display:flex;flex-direction:column;gap:8px">
         <h2 class="h-label">Now</h2>
-        <p style="font-size:17px;line-height:1.5;margin:0;text-wrap:pretty;max-width:62ch">${nowText(p)}</p>
+        <div style="font-size:17px;line-height:1.5;text-wrap:pretty;max-width:62ch">${nowText(p)}</div>
       </section>
       <section style="display:flex;flex-direction:column;gap:8px">
         ${blockedHeading(p, false)}
@@ -848,7 +860,7 @@
 
     const cards = m.active.map(p => {
       const j = jumpFor(p, p.target, 'row');
-      const next2 = p.next.slice(0, 2).map((t, i) => `<div style="display:flex;gap:8px;min-width:0"><span class="mono faint" style="font-size:12px;padding-top:1px">${i + 1}</span><span class="ellipsis">${esc(t)}</span></div>`).join('');
+      const next2 = p.next.slice(0, 2).map((t, i) => `<div style="display:flex;gap:8px;min-width:0"><span class="mono faint" style="font-size:12px;padding-top:1px">${i + 1}</span><span class="ellipsis">${inline(t)}</span></div>`).join('');
       const counts = p.counts.length
         ? p.counts.map(c => `<span style="display:inline-flex;align-items:center;gap:5px"><i class="ph-bold ${c.icon}" style="font-size:13px;color:${c.color}"></i>${esc(c.text)}</span>`).join('')
         : '<span class="faint">No sessions</span>';
@@ -858,7 +870,7 @@
           ${badges(p)}
           <span class="faint" style="margin-left:auto;font-size:12px">${p.shownAt ? ago(p.shownAt) : ''}</span>
         </div>
-        <div style="font-size:14px;line-height:1.45;text-wrap:pretty">${nowText(p)}</div>
+        <div style="font-size:14px;line-height:1.45;text-wrap:pretty;min-width:0">${nowText(p, 2)}</div>
         ${next2 ? `<div class="muted" style="display:flex;flex-direction:column;gap:2px;font-size:13px;min-width:0">${next2}</div>` : ''}
         <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
           <div class="muted" style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;flex:1;min-width:0">${counts}</div>
@@ -947,7 +959,7 @@
       ${staleCallout(p, true)}
       <section style="display:flex;flex-direction:column;gap:6px">
         <h2 class="h-label">Now</h2>
-        <p style="font-size:16px;line-height:1.5;margin:0;text-wrap:pretty">${nowText(p)}</p>
+        <div style="font-size:16px;line-height:1.5;text-wrap:pretty">${nowText(p)}</div>
       </section>
       ${p.blocked.length ? `<section style="display:flex;flex-direction:column;gap:6px">${blockedHeading(p, true)}${blockedRows(p, 10)}</section>` : ''}
       <section style="display:flex;flex-direction:column">

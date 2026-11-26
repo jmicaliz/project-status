@@ -37,6 +37,13 @@ if grep -qxF "$DESC_PLACEHOLDER" "$file"; then
 
 Action needed this session: the description line in the status file is still the placeholder \"$DESC_PLACEHOLDER\". In your first turn, replace it with one plain line describing this project (read the README or top-level files if you need to), even if no code changes."
 fi
+now_problems=$(parse_status "$file" | jq -rRs "$STATUS_JQ"'status_rows(.) | status_sections | (.now // []) | now_problems')
+if [ -n "$now_problems" ]; then
+  header="$header
+
+Action needed this session: ## Now is too long for the dashboard. Trim it to the rules (state, not history; move detail to ## Next, the PR, or the ticket):
+$now_problems"
+fi
 context=$(printf '%s\n\n%s\n\n<project-status-contents path="%s">\n%s\n</project-status-contents>' "$header" "$rules" "$file" "$contents")
 
 if [ "${#context}" -gt "$MAX_CONTEXT" ]; then

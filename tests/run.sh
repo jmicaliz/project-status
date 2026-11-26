@@ -57,6 +57,10 @@ check "session-start: no fill-in request once the description is set" 'jq -e ".h
 
 check "session-start: existing file is never modified" '[ "$(cat "$status")" = "custom content" ]'
 
+printf '# demo status\n\nDemo\n\n## Now\n\n- %0200d\n' 0 >"$status"
+out=$(hook session-start.sh "$repo")
+check "session-start: an oversized Now asks for a trim" 'jq -e ".hookSpecificOutput.additionalContext | contains(\"## Now is too long\") and contains(\"200 characters\")" <<<"$out" >/dev/null'
+
 head -c 20000 /dev/zero | tr '\0' x >"$status"
 out=$(hook session-start.sh "$repo")
 check "session-start: context is truncated under 10000 chars" '[ "$(jq -r ".hookSpecificOutput.additionalContext | length" <<<"$out")" -lt 10000 ]'
@@ -158,7 +162,7 @@ gen="$WORK/status.json"
 PROJECT_STATUS_SESSIONS_FILE="$WORK/sessions.json" "$ROOT/scripts/generate-status.sh" "$gen"
 demo() { jq -c --arg n demo '.projects[] | select(.name == $n)' "$gen"; }
 check "generate: valid payload with host and interval" 'jq -e ".host and .generatedAt and .intervalSeconds == 30 and (.projects | type == \"array\")" "$gen" >/dev/null'
-check "generate: description, now, next parsed" 'demo | jq -e ".desc == \"Demo project for tests\" and .now == \"Writing the generator across two lines.\" and .next == [\"First thing\", \"Second thing\"]" >/dev/null'
+check "generate: description, now, next parsed" 'demo | jq -e ".desc == \"Demo project for tests\" and .now == [\"Writing the generator across two lines.\"] and .next == [\"First thing\", \"Second thing\"]" >/dev/null'
 check "generate: blocked items with and without since" 'demo | jq -e "[.blocked[] | {text, since}] == [{\"text\": \"Waiting on review\", \"since\": \"2026-10-29\"}, {\"text\": \"Undated blocker\", \"since\": null}, {\"text\": \"Waiting on a grant\", \"since\": \"2026-11-16\"}]" >/dev/null'
 check "generate: blockers are unchecked until recorded" 'demo | jq -e "[.blocked[].checked] == [null, null, null]" >/dev/null'
 check "generate: summary strips the date" 'demo | jq -e ".summary == \"wired the generator.\"" >/dev/null'
@@ -361,6 +365,8 @@ check "lint: Blocked item with an invalid since date" 'BLOCKED="- Waiting (since
 check "lint: empty Blocked section" 'BLOCKED= lint_doc && lint_fails "Blocked is empty"'
 check "lint: Last updated without a valid date" 'UPDATED="- 2026-02-30: added lint." lint_doc && lint_fails "valid YYYY-MM-DD"'
 check "lint: never modifies the file" 'UPDATED="- yesterday" lint_doc && cp "$lint_file" "$WORK/lint-before.md" && ! cli lint "$lint_file" >/dev/null && cmp -s "$lint_file" "$WORK/lint-before.md"'
+check "lint: more than 3 Now items" 'NOW="## Now$(printf "\n\n- Item %s." 1 2 3)" lint_doc && lint_fails "has 4 items; keep it to 3"'
+check "lint: a Now item over 160 characters" 'NOW="## Now$(printf "\n\n- %0161d" 0)" lint_doc && lint_fails "161 characters"'
 check "lint: refuses a missing file" '! cli lint "$WORK/nope.md" 2>/dev/null'
 jq --arg repo "$repo" '[{cwd: $repo, kind: "background", sessionId: "abcd1234-0000-4000-8000-000000000000", status: "idle"}, {cwd: $repo, kind: "interactive", sessionId: "eeee5555-0000-4000-8000-000000000000", status: "idle"}]' >"$WORK/cli-rm.json" <<<'null'
 check "cli: rm -y removes a background session by id prefix" 'SESSIONS="$WORK/cli-rm.json" cli rm -y abcd | grep "^Removed abcd1234" >/dev/null && [ "$(log_args)" = "abcd1234 " ]'

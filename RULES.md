@@ -8,7 +8,7 @@ This repo has a status file that records what is in progress, what is next, and 
 - If you commit during the turn, update it after the commit, not before. A later commit makes it stale again.
 - Directly under the title, keep one plain line describing the project (for example "Personal knowledgebase"). If it is still the placeholder, fill it in during your first turn, even if no code changes.
 - Keep exactly these sections:
-  - `## Now`: 1-3 lines on what is actively in progress.
+  - `## Now`: up to 3 bullets, one per piece of work in progress, each under 160 characters. Start each with a short label and a colon (`ENGN-12 docs site: PR #71 open, waiting on review`). Say where things stand, not how they got there: commit hashes, review history, and findings belong in the PR, the ticket, or `## Next`.
   - `## Next`: an ordered list of upcoming tasks.
   - `## Blocked`: anything waiting on someone other than the user, or on an external system, each ending with `(since YYYY-MM-DD)`, or "None." The user's own pending actions go in `## Next`.
   - `## Last updated`: today's date (YYYY-MM-DD) and a one-line summary of what changed.
