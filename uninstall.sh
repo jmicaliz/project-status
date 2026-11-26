@@ -52,6 +52,7 @@ fi
 ! cmp -s "$REPO_ROOT/RULES.md" "$STATUS_DIR/_rules.md" || rm -f "$STATUS_DIR/_rules.md"
 rm -rf "${STATUS_DIR:?}/.usage"
 rm -rf "${STATUS_DIR:?}/.repos"
+rm -rf "${STATUS_DIR:?}/.checked"
 rm -f "$STATUS_DIR/.token"
 rmdir "$STATUS_DIR" 2>/dev/null || true
 

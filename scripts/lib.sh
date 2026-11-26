@@ -63,13 +63,21 @@ parse_status() {
 
 # shellcheck disable=SC2016,SC2034 # jq source, read by the scripts that source this file
 STATUS_JQ='
+  def rows($t): $t | split("\n") | map(select(length > 0) | split("\t"));
+  def status_rows($t): rows($t) | map({k: .[1], v: (.[2:] | join("\t"))});
+  def checked_key: "\(.since // "")\t\(.text)";
   def status_sections: reduce .[] as $r ({};
     if ($r.k | endswith("+")) then
       ($r.k | rtrimstr("+")) as $k
       | .[$k] |= (if (. // []) | length > 0 then .[:-1] + [.[-1] + " " + $r.v] else [$r.v] end)
     else .[$r.k] += [$r.v] end);
-  def blocked_item: capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)\\s*$") // {text: ., since: null};
+  def blocked_item: capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)[.\\s]*$") // {text: ., since: null};
+  def blocked_items: map(select(test("^none\\.?$"; "i") | not) | blocked_item);
 '
+
+checked_file() {
+  printf '%s/.checked/%s\n' "$STATUS_DIR" "$1"
+}
 
 repo_path_file() {
   printf '%s/.repos/%s\n' "$STATUS_DIR" "$1"

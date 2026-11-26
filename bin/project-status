@@ -34,6 +34,8 @@ Commands:
   edit [repo]                  Open the repo's status file in $VISUAL or $EDITOR.
   lint [file]                  Check a status file against the rules: one line per problem, exit 1 if any.
                                Defaults to the current repo's file.
+  checked [repo]               Record that the repo's blockers were rechecked today (shown on the dashboard).
+        [--unverified TEXT]    Leave out a blocker that could not be verified; repeat for each.
   rm <id> [-y]                 Remove a background session (asks first unless -y).
 
 The repo defaults to the one you are in; "." also means the current repo.
@@ -338,7 +340,7 @@ cmd_lint() {
     def valid_date: . as $d | (try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == $d;
     def headings: map("## " + .) | join(", ");
     ["Now", "Next", "Blocked", "Last updated"] as $want
-    | [$parsed | split("\n")[] | select(length > 0) | split("\t") | {k: .[1], v: (.[2:] | join("\t"))}] as $rows
+    | status_rows($parsed) as $rows
     | [$rows[] | select(.k == "#") | .v] as $have
     | ($rows | status_sections) as $s
     | (if $have != $want then
@@ -361,6 +363,45 @@ cmd_lint() {
   ' >"$work/lint.txt"
   cat "$work/lint.txt"
   [ ! -s "$work/lint.txt" ]
+}
+
+cmd_checked() {
+  local repo="" file out unverified=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --unverified)
+        [ $# -ge 2 ] || die "checked: --unverified needs a blocker's text"
+        unverified+=("$2")
+        shift
+        ;;
+      -*) die "checked: unknown option $1" ;;
+      *) [ -z "$repo" ] || die "checked: too many arguments"; repo=$1 ;;
+    esac
+    shift
+  done
+  repo=$(resolve_repo "$repo")
+  file=$(existing_status_file "$repo")
+  out=$(checked_file "$repo")
+  parse_status "$file" >"$work/parsed.tsv"
+  if [ -f "$out" ]; then cp "$out" "$work/previous.tsv"; else : >"$work/previous.tsv"; fi
+  mkdir -p "${out%/*}"
+  jq -rn --rawfile parsed "$work/parsed.tsv" --rawfile previous "$work/previous.tsv" --arg today "$(date +%Y-%m-%d)" \
+    "$STATUS_JQ"'
+    (rows($previous) | map({key: (.[1:] | join("\t")), value: .[0]}) | from_entries) as $before
+    | [status_rows($parsed) | status_sections | (.blocked // []) | blocked_items[]] as $items
+    | ($ARGS.positional - ($items | map(.text))) as $unknown
+    | if $unknown != [] then "checked: --unverified matches no blocker: \($unknown | join(", "))\n" | halt_error(1) else . end
+    | $items[] | checked_key as $key
+    | (if .text | IN($ARGS.positional[]) then $before[$key] else $today end) as $date
+    | select($date != null) | "\($date)\t\($key)"
+  ' --args -- ${unverified[@]+"${unverified[@]}"} >"$work/checked.tsv" 2>"$work/err" || die "$(cat "$work/err")"
+  if [ -s "$work/checked.tsv" ]; then
+    mv "$work/checked.tsv" "$out"
+    printf 'Recorded %s blocker(s) in %s as checked today.\n' "$(awk -v d="$(date +%Y-%m-%d)" '$1 == d { n++ } END { print n + 0 }' "$out")" "$repo"
+  else
+    rm -f "$out"
+    printf 'Nothing to record in %s.\n' "$repo"
+  fi
 }
 
 cmd_rm() {
@@ -400,7 +441,7 @@ cmd_rm() {
 }
 
 case "${1:-}" in
-  ls | needs | attach | start | show | path | edit | lint | rm)
+  ls | needs | attach | start | show | path | edit | lint | checked | rm)
     command=$1
     shift
     "cmd_$command" "$@"

@@ -9,6 +9,7 @@ Status files live centrally at `~/.project-status/<repo>.md`, not inside each re
 - **SessionStart hook**: records the repo's path in `~/.project-status/.repos/<repo>` for the dashboard, creates `~/.project-status/<repo>.md` from `~/.project-status/_template.md` if it's missing, then injects the file's path, its contents, and the maintenance rules from `~/.project-status/_rules.md` into context. Runs on startup, resume, clear, compact, and fork. Your `~/.claude/CLAUDE.md` is never touched.
 - **Stop hook**: if the newest change in the working tree (latest commit time, or mtime of any modified or untracked file) is newer than the status file, it tells Claude to update the file before finishing. It does nothing when `stop_hook_active` is set, so it fires at most once per turn.
 - **`/project-status:update [what changed]`**: records progress that left no code change (a decision, a cleared blocker, a manual deploy) now, instead of relying on Claude to remember the rule. It re-reads the file, folds in your note and what the session established, then runs `project-status lint` and fixes what it reports.
+- **`/project-status:check-blockers`**: rechecks each Blocked item against its PR, ticket, or branch, clears or moves the ones that no longer hold, then runs `project-status checked`. Blockers change outside the repo, so nothing else catches them. The dashboard shows when each blocker was last rechecked, and its Recheck button starts a background session that runs this command.
 - Directories that aren't git repos are ignored silently.
 
 ## Requirements
@@ -49,7 +50,7 @@ It coexists with a dotfiles bootstrap that jq deep-merges `settings.json` (array
 ~/repos/project-status/uninstall.sh
 ```
 
-It removes the plugin, the marketplace, the CLI link, the permission entries and status line that install added (markers in `~/.project-status/.added-*` track which ones; a status line you've since changed is left alone), `_template.md` and `_rules.md` unless you've customized them, the recorded repo paths in `.repos/`, the usage records in `.usage/`, and the dashboard token. Your status files are kept. The dashboard units are separate: `make dashboard-uninstall`. `~/.project-status/` is removed only if it's empty.
+It removes the plugin, the marketplace, the CLI link, the permission entries and status line that install added (markers in `~/.project-status/.added-*` track which ones; a status line you've since changed is left alone), `_template.md` and `_rules.md` unless you've customized them, the recorded repo paths in `.repos/`, the blocker check records in `.checked/`, the usage records in `.usage/`, and the dashboard token. Your status files are kept. The dashboard units are separate: `make dashboard-uninstall`. `~/.project-status/` is removed only if it's empty.
 
 ## Customize
 
@@ -74,6 +75,8 @@ project-status show [repo]            # print the status file
 project-status path [repo]            # print its path
 project-status edit [repo]            # open it in $VISUAL or $EDITOR
 project-status lint [file]            # check a status file against the rules; one line per problem, exits 1 if any
+project-status checked [repo]         # record the repo's current blockers as rechecked today (in ~/.project-status/.checked/)
+  [--unverified TEXT]                 #   leave out a blocker that could not be verified
 project-status rm <id> [-y]           # remove a background session; asks first unless -y
 ```
 

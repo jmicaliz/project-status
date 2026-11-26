@@ -11,6 +11,7 @@
   const COPY_MS = 2600;
   const DAY_MS = 864e5;
   const DORMANT_MS = 14 * DAY_MS;
+  const CHECK_PROMPT = '/project-status:check-blockers';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   const ST = {
@@ -214,7 +215,8 @@
     if (n.kind === 'blocked') {
       const since = n.b.since ? 'since ' + sinceLabel(n.b.since) : 'blocked';
       const time = n.b.since ? since : '';
-      return { label: 'Blocked', icon: 'ph-hourglass-medium', color: 'var(--warn)', title: n.b.text, project: n.p.name, meta: since, time, shortTime: time, jump: null };
+      const meta = since + ' · ' + checkedLabel(n.b);
+      return { label: 'Blocked', icon: 'ph-hourglass-medium', color: 'var(--warn)', title: n.b.text, project: n.p.name, meta, time, shortTime: time, jump: null };
     }
     return {
       label: 'Stale status', icon: 'ph-clock-counter-clockwise', color: 'var(--warn)',
@@ -583,10 +585,25 @@
     </div>`;
   }
 
+  function checkedLabel(b) {
+    return b.checked ? 'checked ' + sinceLabel(b.checked) : 'not rechecked';
+  }
+
+  function blockedMeta(b) {
+    const checked = checkedLabel(b);
+    return b.since ? 'Since ' + sinceLabel(b.since) + ' · ' + checked : checked[0].toUpperCase() + checked.slice(1);
+  }
+
+  function blockedHeading(p, mobile) {
+    const label = `<h2 class="h-label">Blocked</h2>`;
+    if (!state.api || !p.blocked.length) return label;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">${label}${startButton(p, 'check', mobile)}</div>`;
+  }
+
   function blockedRows(p, radius) {
     return p.blocked.map(b => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:${radius}px;background:var(--warn-tint)">
       <i class="ph-bold ph-hourglass-medium" style="color:var(--warn);font-size:16px;margin-top:2px"></i>
-      <div style="display:flex;flex-direction:column"><span style="font-size:14px;font-weight:500">${esc(b.text)}</span>${b.since ? `<span class="muted" style="font-size:12px">Since ${esc(sinceLabel(b.since))}</span>` : ''}</div>
+      <div style="display:flex;flex-direction:column"><span style="font-size:14px;font-weight:500">${esc(b.text)}</span><span class="muted" style="font-size:12px">${esc(blockedMeta(b))}</span></div>
     </div>`).join('');
   }
 
@@ -594,11 +611,12 @@
     if (!state.api) return '';
     const key = `start:${p.name}:${idx}`;
     const isNew = idx === 'new';
-    const icon = state.starting === key ? 'ph-circle-notch spin' : isNew ? 'ph-plus' : 'ph-play';
-    const label = isNew ? 'New session' : 'Start';
-    const title = isNew ? 'Start a new Claude session in this repo' : 'Start a Claude session with this as the prompt';
+    const isCheck = idx === 'check';
+    const icon = state.starting === key ? 'ph-circle-notch spin' : isNew ? 'ph-plus' : isCheck ? 'ph-arrows-clockwise' : 'ph-play';
+    const label = isNew ? 'New session' : isCheck ? 'Recheck' : 'Start';
+    const title = isNew ? 'Start a new Claude session in this repo' : isCheck ? 'Start a Claude session that rechecks these blockers' : 'Start a Claude session with this as the prompt';
     const attrs = `data-act="start" data-key="${esc(key)}" data-name="${esc(p.name)}" data-idx="${idx}" title="${esc(title)}"${state.starting ? ' disabled' : ''}`;
-    if (mobile && !isNew) {
+    if (mobile && !isNew && !isCheck) {
       return `<button class="btn btn-ghost btn-icon" ${attrs} aria-label="${esc(label)}" style="width:40px;height:40px;margin:-8px -8px -8px 0;flex:none"><i class="ph-bold ${icon}" style="font-size:16px"></i></button>`;
     }
     const size = mobile ? 'min-height:40px;margin-right:-8px' : '';
@@ -690,7 +708,7 @@
         <p style="font-size:17px;line-height:1.5;margin:0;text-wrap:pretty;max-width:62ch">${nowText(p)}</p>
       </section>
       <section style="display:flex;flex-direction:column;gap:8px">
-        <h2 class="h-label">Blocked</h2>
+        ${blockedHeading(p, false)}
         ${p.blocked.length ? blockedRows(p, 8) : '<span class="faint" style="font-size:14px">Nothing blocked.</span>'}
       </section>
       <section style="display:flex;flex-direction:column;gap:4px">
@@ -931,7 +949,7 @@
         <h2 class="h-label">Now</h2>
         <p style="font-size:16px;line-height:1.5;margin:0;text-wrap:pretty">${nowText(p)}</p>
       </section>
-      ${p.blocked.length ? `<section style="display:flex;flex-direction:column;gap:6px"><h2 class="h-label">Blocked</h2>${blockedRows(p, 10)}</section>` : ''}
+      ${p.blocked.length ? `<section style="display:flex;flex-direction:column;gap:6px">${blockedHeading(p, true)}${blockedRows(p, 10)}</section>` : ''}
       <section style="display:flex;flex-direction:column">
         ${sessionsHeading(p, true)}
         ${sessions}
@@ -1183,7 +1201,7 @@
     if (state.starting) return;
     const project = (state.data?.projects || []).find(p => p.name === name);
     if (!project) return;
-    const prompt = idx === 'new' ? '' : (project.next || [])[Number(idx)] || '';
+    const prompt = idx === 'new' ? '' : idx === 'check' ? CHECK_PROMPT : (project.next || [])[Number(idx)] || '';
     const ask = { name, idx, key };
     if (!readToken()) return askToken(ask, '');
     state.starting = key;

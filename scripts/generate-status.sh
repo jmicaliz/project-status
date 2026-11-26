@@ -257,6 +257,12 @@ if [ ${#status_files[@]} -gt 0 ]; then
   stat "${TIMES_PATH_FLAGS[@]}" "${status_files[@]}" 2>/dev/null >"$work/times" || true
 fi
 
+: >"$work/checked.tsv"
+while IFS= read -r name; do
+  file=$(checked_file "$name")
+  [ -f "$file" ] && awk -v n="$name" '{ print n "\t" $0 }' "$file" >>"$work/checked.tsv"
+done <"$work/names"
+
 : >"$work/paths.tsv"
 while IFS= read -r name; do
   path=$(resolve_path "$name")
@@ -271,10 +277,10 @@ cat /dev/null "$work"/newest.* >"$work/newest.tsv" 2>/dev/null || : >"$work/newe
 
 jq -n -c \
   --rawfile names "$work/names" --rawfile paths "$work/paths.tsv" --rawfile parsed "$work/parsed.tsv" \
-  --rawfile times "$work/times" --rawfile newest "$work/newest.tsv" \
+  --rawfile times "$work/times" --rawfile newest "$work/newest.tsv" --rawfile checked "$work/checked.tsv" \
   --arg home "$HOME" --arg dir "$STATUS_DIR" --argjson now "$now" "$STATUS_JQ"'
-  def rows($t): $t | split("\n") | map(select(length > 0) | split("\t"));
   (rows($paths) | map({key: .[0], value: .[1]}) | from_entries) as $pathOf
+  | (rows($checked) | group_by(.[0]) | map({key: .[0][0], value: map({key: (.[2:] | join("\t")), value: .[1]}) | from_entries}) | from_entries) as $checkedOf
   | (rows($newest) | map({key: .[0], value: (.[1] | tonumber? // 0)}) | from_entries) as $newestOf
   | ($times | split("\n") | map(select(length > 0) | capture("^(?<m>[0-9]+) (?<b>[^ ]+) (?<f>.*)$")
       | {key: (.f | split("/") | last | rtrimstr(".md")), value: {mt: (.m | tonumber), bt: (.b | tonumber? // 0 | if . < 0 then 0 else . end)}})
@@ -292,9 +298,8 @@ jq -n -c \
       desc: (($s.desc // [""])[0] | if test("^\\(.*description\\)$") then "" else . end),
       now: (($s.now // []) | join(" ")),
       next: (($s.next // []) | map(select(test("^\\(none yet\\)$") | not))),
-      blocked: (($s.blocked // [])
-        | map(select(test("^none\\.?$"; "i") | not)
-          | blocked_item)),
+      blocked: (($s.blocked // []) | blocked_items
+        | map(. as $b | . + {checked: (($checkedOf[$name] // {})[$b | checked_key] // null)})),
       updatedAt: (if $hasStatus then ($t.mt | todate) else null end),
       summary: (($s["last updated"] // [""])[0]
         | sub("^\\d{4}-\\d{2}-\\d{2}:?\\s*"; "")

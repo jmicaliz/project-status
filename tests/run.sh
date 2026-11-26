@@ -139,6 +139,7 @@ Demo project for tests
 
 - Waiting on review (since 2026-10-29)
 - Undated blocker
+- Waiting on a grant (since 2026-11-16).
 
 ## Last updated
 
@@ -158,7 +159,8 @@ PROJECT_STATUS_SESSIONS_FILE="$WORK/sessions.json" "$ROOT/scripts/generate-statu
 demo() { jq -c --arg n demo '.projects[] | select(.name == $n)' "$gen"; }
 check "generate: valid payload with host and interval" 'jq -e ".host and .generatedAt and .intervalSeconds == 30 and (.projects | type == \"array\")" "$gen" >/dev/null'
 check "generate: description, now, next parsed" 'demo | jq -e ".desc == \"Demo project for tests\" and .now == \"Writing the generator across two lines.\" and .next == [\"First thing\", \"Second thing\"]" >/dev/null'
-check "generate: blocked items with and without since" 'demo | jq -e ".blocked == [{\"text\": \"Waiting on review\", \"since\": \"2026-10-29\"}, {\"text\": \"Undated blocker\", \"since\": null}]" >/dev/null'
+check "generate: blocked items with and without since" 'demo | jq -e "[.blocked[] | {text, since}] == [{\"text\": \"Waiting on review\", \"since\": \"2026-10-29\"}, {\"text\": \"Undated blocker\", \"since\": null}, {\"text\": \"Waiting on a grant\", \"since\": \"2026-11-16\"}]" >/dev/null'
+check "generate: blockers are unchecked until recorded" 'demo | jq -e "[.blocked[].checked] == [null, null, null]" >/dev/null'
 check "generate: summary strips the date" 'demo | jq -e ".summary == \"wired the generator.\"" >/dev/null'
 check "generate: worktree and main sessions map to one project" 'demo | jq -e "[.sessions[] | {id, state}] == [{\"id\": \"s-wt\", \"state\": \"input\"}, {\"id\": \"s-main\", \"state\": \"working\"}, {\"id\": \"s-new\", \"state\": \"working\"}]" >/dev/null'
 check "generate: a session with no status yet falls back to its job state" 'demo | jq -e ".sessions[] | select(.id == \"s-new\") | .state == \"working\"" >/dev/null'
@@ -320,6 +322,22 @@ check "cli: edit opens the status file in EDITOR" '[ "$(EDITOR=echo cli edit dem
 check "cli: show and edit refuse a repo with no status file" '! cli show nope 2>/dev/null && ! EDITOR=echo cli edit nope 2>/dev/null'
 check "cli: path prints the repo's status file path" '[ "$(cli path demo)" = "$status" ] && [ "$(cd "$repo" && cli path)" = "$status" ]'
 check "cli: path fails outside a repo" '! (cd "$WORK" && cli path) >"$WORK/path-out" 2>/dev/null && [ ! -s "$WORK/path-out" ]'
+
+today=$(date +%Y-%m-%d)
+check "cli: checked skips an unverified blocker that was never checked" 'cli checked demo --unverified "Undated blocker" | grep -q "^Recorded 2 blocker" && ! grep -q "Undated blocker" "$PROJECT_STATUS_DIR/.checked/demo"'
+printf '2026-11-01\t\tUndated blocker\n' >>"$PROJECT_STATUS_DIR/.checked/demo"
+check "cli: checked keeps an unverified blocker's earlier date" 'cli checked demo --unverified "Undated blocker" >/dev/null && grep -q "^2026-11-01	" "$PROJECT_STATUS_DIR/.checked/demo"'
+check "cli: checked refuses an --unverified text that matches no blocker" '! cli checked demo --unverified "-n" 2>"$WORK/cli-err" && grep -q "matches no blocker: -n" "$WORK/cli-err"'
+check "cli: checked records each blocker as checked today" 'cli checked demo | grep -q "^Recorded 3 blocker" && [ "$(cut -f1 "$PROJECT_STATUS_DIR/.checked/demo" | sort -u)" = "$today" ] && [ "$(cut -f2- "$PROJECT_STATUS_DIR/.checked/demo" | sed -n 3p)" = "2026-11-16	Waiting on a grant" ]'
+check "cli: checked leaves the status file alone" 'cp "$status" "$WORK/checked-before.md" && cli checked demo >/dev/null && cmp -s "$status" "$WORK/checked-before.md"'
+PROJECT_STATUS_SESSIONS_FILE="$WORK/sessions.json" "$ROOT/scripts/generate-status.sh" "$gen"
+check "generate: checked dates attach to blockers by since date and text" 'demo | jq -e --arg t "$today" "[.blocked[].checked] == [\$t, \$t, \$t]" >/dev/null'
+mv "$PROJECT_STATUS_DIR/.checked/demo" "$WORK/checked-demo"
+awk 'BEGIN { FS = OFS = "\t" } $3 == "Waiting on review" { $3 = "Waiting on another review" } $3 == "Waiting on a grant" { $2 = "2026-11-01" } 1' "$WORK/checked-demo" >"$PROJECT_STATUS_DIR/.checked/demo"
+PROJECT_STATUS_SESSIONS_FILE="$WORK/sessions.json" "$ROOT/scripts/generate-status.sh" "$gen"
+check "generate: a blocker whose text or since date changed is unchecked again" 'demo | jq -e "[.blocked[].checked != null] == [false, true, false]" >/dev/null'
+rm -rf "$PROJECT_STATUS_DIR/.checked"
+PROJECT_STATUS_SESSIONS_FILE="$WORK/sessions.json" "$ROOT/scripts/generate-status.sh" "$gen"
 
 lint_file="$WORK/lint.md"
 lint_doc() {

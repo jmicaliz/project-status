@@ -10,7 +10,7 @@ This repo has a status file that records what is in progress, what is next, and 
 - Keep exactly these sections:
   - `## Now`: 1-3 lines on what is actively in progress.
   - `## Next`: an ordered list of upcoming tasks.
-  - `## Blocked`: anything waiting on a person, decision, or external system, each ending with `(since YYYY-MM-DD)`, or "None."
+  - `## Blocked`: anything waiting on someone other than the user, or on an external system, each ending with `(since YYYY-MM-DD)`, or "None." The user's own pending actions go in `## Next`.
   - `## Last updated`: today's date (YYYY-MM-DD) and a one-line summary of what changed.
 - Keep the whole file under 40 lines. Replace stale content; never append a log or history.
 - Do not create a status file inside the repository. The file lives outside it so worktrees share one copy.
