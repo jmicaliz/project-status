@@ -73,6 +73,9 @@ STATUS_JQ='
     else .[$r.k] += [$r.v] end);
   def blocked_item: capture("^(?<text>.*?)\\s*\\(since (?<since>\\d{4}-\\d{2}-\\d{2})\\)[.\\s]*$") // {text: ., since: null};
   def blocked_items: map(select(test("^none\\.?$"; "i") | not) | blocked_item);
+  def now_problems: {items: 3, chars: 160} as $max
+    | (if length > $max.items then "## Now has \(length) items; keep it to \($max.items)" else empty end),
+      (.[] | select(length >= $max.chars) | "## Now item is \(length) characters; keep each under \($max.chars): \(.[:50])...");
 '
 
 checked_file() {

@@ -130,7 +130,7 @@ cmd_ls() {
             flags: ([if .stale then "stale" else empty end,
                      if (.blocked | length) > 0 then "blocked" else empty end,
                      if .hasStatus | not then "no status" else empty end] | join(", ")),
-            now
+            now: (.now | join("; "))
           }
         | .dormant = (.rank == 9 and ($now - .last) > 14 * 86400)]
     | sort_by(.rank, -.last)
@@ -356,6 +356,7 @@ cmd_lint() {
           elif $b == [] then "## Blocked is empty; write \"None.\""
           else $b[] | select(blocked_item.since | . == null or (valid_date | not)) | "Blocked item must end with (since YYYY-MM-DD), or the section must be exactly \"None.\": \(.)"
           end),
+      (($s.now // []) | now_problems),
       (select($have | index("Last updated")) | ($s["last updated"] // [""])[0]
         | (capture("^(?<d>\\d{4}-\\d{2}-\\d{2})").d // "") as $d
         | if $d | valid_date then empty else "## Last updated must start with a valid YYYY-MM-DD date: \(.)" end)
